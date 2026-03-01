@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACMI Tacview 3D Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; color: #e0e0e0; font-family: 'Consolas', 'Monaco', monospace; overflow: hidden; }
+#canvas-container { width: 100vw; height: 100vh; position: relative; }
+canvas { display: block; }
+
+#drop-zone {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(10,10,15,0.95); transition: opacity 0.3s;
+}
+#drop-zone.hidden { opacity: 0; pointer-events: none; }
+#drop-zone .icon { font-size: 64px; margin-bottom: 20px; opacity: 0.7; }
+#drop-zone h2 { font-size: 24px; font-weight: 300; color: #4af; margin-bottom: 8px; }
+#drop-zone p { font-size: 14px; color: #888; }
+#drop-zone.drag-over { background: rgba(20,40,80,0.95); }
+#drop-zone .browse-btn {
+  margin-top: 16px; padding: 8px 24px;
+  background: rgba(68,170,255,0.2); border: 1px solid #4af; color: #4af;
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 14px;
+}
+#drop-zone .browse-btn:hover { background: rgba(68,170,255,0.3); }
+#file-input { display: none; }
+
+.hud { position: fixed; z-index: 10; pointer-events: auto; }
+
+#info-panel {
+  top: 12px; left: 12px;
+  background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 6px;
+  padding: 10px 14px; min-width: 220px;
+}
+#info-panel .title { color: #4af; font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+#info-panel .info-row { font-size: 12px; color: #aaa; margin: 2px 0; }
+#info-panel .info-row span { color: #ddd; }
+
+#object-panel {
+  top: 12px; right: 12px;
+  background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 6px;
+  padding: 10px 14px; min-width: 200px; max-height: 50vh; overflow-y: auto;
+}
+#object-panel .section-title { color: #4af; font-size: 12px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+.obj-entry {
+  font-size: 12px; padding: 3px 6px; margin: 2px 0; border-radius: 3px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+}
+.obj-entry:hover { background: rgba(255,255,255,0.1); }
+.obj-entry.tracking { background: rgba(68,170,255,0.2); border: 1px solid #4af; }
+.obj-entry .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.obj-entry.destroyed { opacity: 0.4; text-decoration: line-through; }
+
+#timeline-bar {
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.85); border-top: 1px solid #333;
+  padding: 8px 16px 12px;
+}
+#timeline-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+#timeline-controls button {
+  background: rgba(255,255,255,0.1); border: 1px solid #555; color: #ddd;
+  padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
+}
+#timeline-controls button:hover { background: rgba(255,255,255,0.2); }
+#time-display { font-size: 14px; color: #4af; min-width: 80px; text-align: center; font-variant-numeric: tabular-nums; }
+#speed-display { font-size: 12px; color: #888; min-width: 40px; text-align: center; }
+
+#timeline-slider {
+  width: 100%; height: 6px; -webkit-appearance: none; appearance: none;
+  background: #222; border-radius: 3px; outline: none; cursor: pointer;
+}
+#timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #4af; border-radius: 50%; cursor: grab; }
+#timeline-slider::-moz-range-thumb { width: 14px; height: 14px; background: #4af; border-radius: 50%; cursor: grab; border: none; }
+
+#event-log { position: fixed; bottom: 60px; left: 16px; z-index: 10; max-width: 500px; pointer-events: none; }
+.event-msg {
+  font-size: 13px; padding: 4px 10px; margin: 3px 0; border-radius: 4px;
+  background: rgba(0,0,0,0.7); border-left: 3px solid #4af;
+  animation: fadeInUp 0.3s ease-out, fadeOut 0.5s ease-in 4.5s forwards;
+  white-space: nowrap;
+}
+.event-msg.red-event { border-left-color: #f44; }
+.event-msg.blue-event { border-left-color: #4af; }
+.event-msg.hit-event { border-left-color: #ff0; color: #ff0; font-weight: bold; }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+#camera-mode {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+  background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 4px;
+  padding: 4px 12px; font-size: 12px; color: #888;
+}
+#camera-mode span { color: #4af; }
+
+.label-3d {
+  position: absolute; pointer-events: none; font-size: 11px; white-space: nowrap;
+  text-shadow: 0 0 4px #000, 0 0 8px #000;
+  padding: 1px 4px; will-change: transform;
+  transform: translate(-50%, -100%);
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <div class="icon">&#9992;</div>
+  <h2>ACMI Tacview 3D Viewer</h2>
+  <p>Drag &amp; drop an ACMI file here to begin</p>
+  <button class="browse-btn" onclick="document.getElementById('file-input').click()">Browse Files</button>
+  <input type="file" id="file-input" accept=".acmi,.txt">
+</div>
+
+<div id="canvas-container"></div>
+
+<div id="camera-mode" class="hud" style="display:none;">
+  Camera: <span id="camera-mode-text">Free</span>
+  <small style="color:#666">&nbsp;[ESC] free &bull; dblclick to track</small>
+</div>
+
+<div id="info-panel" class="hud" style="display:none;">
+  <div class="title" id="scenario-title">-</div>
+  <div class="info-row">Time: <span id="info-time">0.0s</span></div>
+  <div class="info-row">Objects: <span id="info-objects">0</span></div>
+  <div class="info-row">Duration: <span id="info-duration">0.0s</span></div>
+</div>
+
+<div id="object-panel" class="hud" style="display:none;">
+  <div class="section-title">Objects</div>
+  <div id="object-list"></div>
+</div>
+
+<div id="event-log"></div>
+
+<div id="timeline-bar" class="hud" style="display:none;">
+  <div id="timeline-controls">
+    <button id="btn-play" title="Space">&#9654; Play</button>
+    <button id="btn-slower" title="-">&#9664;</button>
+    <span id="speed-display">1x</span>
+    <button id="btn-faster" title="+">&#9654;</button>
+    <span id="time-display">00:00.0</span>
+    <span style="flex:1"></span>
+    <button id="btn-reset" title="R">&#8634; Reset</button>
+  </div>
+  <input type="range" id="timeline-slider" min="0" max="1000" value="0" step="1">
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ═══════════════════════════════════════════
+// ACMI Parser
+// ═══════════════════════════════════════════
+function parseACMI(text) {
+  const lines = text.split('\n');
+  const data = {
+    refLat: 0, refLon: 0, refTime: '', title: '',
+    frames: [], objectDefs: {}, maxTime: 0,
+  };
+  let currentFrame = null;
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li].trim();
+    if (!line || line.charCodeAt(0) === 70 && line.startsWith('File')) continue; // FileType/FileVersion
+
+    if (line.charCodeAt(0) === 35) { // '#'
+      const t = parseFloat(line.substring(1));
+      currentFrame = { time: t, updates: [], removals: [], events: [], labels: {} };
+      data.frames.push(currentFrame);
+      if (t > data.maxTime) data.maxTime = t;
+      continue;
+    }
+
+    if (line.charCodeAt(0) === 48 && line.charCodeAt(1) === 44) { // '0,'
+      const rest = line.substring(2);
+      const eqi = rest.indexOf('=');
+      if (eqi === -1) continue;
+      const key = rest.substring(0, eqi);
+      const val = rest.substring(eqi + 1);
+      if (key === 'ReferenceLatitude') data.refLat = parseFloat(val);
+      else if (key === 'ReferenceLongitude') data.refLon = parseFloat(val);
+      else if (key === 'ReferenceTime') data.refTime = val;
+      else if (key === 'Title') { data.title = val; }
+      else if (key === 'Event' && currentFrame) currentFrame.events.push(val);
+      continue;
+    }
+
+    if (line.charCodeAt(0) === 45) { // '-'
+      if (currentFrame) currentFrame.removals.push(line.substring(1));
+      continue;
+    }
+
+    const ci = line.indexOf(',');
+    if (ci === -1) continue;
+    const id = line.substring(0, ci);
+    const rest = line.substring(ci + 1);
+
+    // Fast key=value split — handle T= specially (contains |)
+    const update = { id };
+    let i = 0;
+    while (i < rest.length) {
+      const eqi = rest.indexOf('=', i);
+      if (eqi === -1) break;
+      const key = rest.substring(i, eqi);
+      let end;
+      if (key === 'T') {
+        // T value ends at next comma followed by uppercase letter, or end of string
+        end = eqi + 1;
+        while (end < rest.length) {
+          if (rest.charCodeAt(end) === 44) { // ','
+            const next = rest.charCodeAt(end + 1);
+            if (next >= 65 && next <= 90) break; // A-Z
+          }
+          end++;
+        }
+      } else {
+        end = rest.indexOf(',', eqi + 1);
+        if (end === -1) end = rest.length;
+      }
+      const val = rest.substring(eqi + 1, end);
+
+      if (key === 'T') {
+        const parts = val.split('|');
+        update.lon = +parts[0] || 0;
+        update.lat = +parts[1] || 0;
+        update.alt = +parts[2] || 0;
+        if (parts.length >= 6) {
+          update.roll = +parts[3] || 0;
+          update.pitch = +parts[4] || 0;
+          update.yaw = +parts[5] || 0;
+        }
+      } else if (key === 'Name') {
+        (data.objectDefs[id] || (data.objectDefs[id] = {})).name = val;
+      } else if (key === 'Type') {
+        (data.objectDefs[id] || (data.objectDefs[id] = {})).type = val;
+      } else if (key === 'Color') {
+        (data.objectDefs[id] || (data.objectDefs[id] = {})).color = val;
+      } else if (key === 'Pilot') {
+        (data.objectDefs[id] || (data.objectDefs[id] = {})).pilot = val;
+      } else if (key === 'Label' && currentFrame) {
+        currentFrame.labels[id] = val;
+      }
+
+      i = end + 1;
+    }
+
+    if (currentFrame && update.lon !== undefined) {
+      currentFrame.updates.push(update);
+    }
+  }
+  return data;
+}
+
+// ═══════════════════════════════════════════
+// Geo → World (reusable vector to avoid alloc)
+// ═══════════════════════════════════════════
+const DEG_TO_M = 111320;
+const _v3 = new THREE.Vector3();
+
+function geoToWorld(out, lon, lat, alt, refLon, refLat) {
+  out.x = (lon - refLon) * DEG_TO_M;
+  out.y = alt;
+  out.z = -(lat - refLat) * DEG_TO_M;
+  return out;
+}
+
+// ═══════════════════════════════════════════
+// Colors
+// ═══════════════════════════════════════════
+const COLOR_MAP = { Blue: 0x4488ff, Red: 0xff4444, Cyan: 0x00ccff, Orange: 0xff8800, Green: 0x44ff44, Yellow: 0xffff00, White: 0xffffff };
+const CSS_COLOR  = { Blue: '#4488ff', Red: '#ff4444', Cyan: '#00ccff', Orange: '#ff8800', Green: '#44ff44', Yellow: '#ffff00', White: '#ffffff' };
+function getColor(c) { return COLOR_MAP[c] || 0xcccccc; }
+function getCSSColor(c) { return CSS_COLOR[c] || '#cccccc'; }
+
+// ═══════════════════════════════════════════
+// Aircraft mesh — single BufferGeometry, clear fighter shape
+//
+//   Top view (XZ plane, +Z = forward/nose):
+//
+//          nose
+//           /\
+//          /  \         ← fuselage top edges
+//         / ·  \
+//   ─────/      \─────  ← main delta wings (wide)
+//   ────/   body  \────
+//       \        /
+//        \      /       ← rear fuselage narrows
+//    ═════\    /═════   ← horizontal stabilizers
+//          \  /
+//           \/          ← tail nozzle
+//           ||
+//          ====         ← vertical tail fin (stands up in Y)
+//
+//   Side view (YZ plane):
+//           ___________
+//      fin |/          \  nose
+//          |____________/
+//
+// ═══════════════════════════════════════════
+function createAircraftGeo() {
+  // All coords in local space. Forward = +Z, Up = +Y, Right = +X
+  // We'll build triangles directly.
+  const S = 100; // scale factor — 100 units ~ visible at typical zoom
+
+  // Key points
+  const nose   = [0,    0,    3.0*S];
+  const wl     = [-2.5*S, 0, -0.2*S];  // wing tip left
+  const wr     = [ 2.5*S, 0, -0.2*S];  // wing tip right
+  const wlr    = [-1.8*S, 0, -1.0*S];  // wing trailing edge left
+  const wrr    = [ 1.8*S, 0, -1.0*S];  // wing trailing edge right
+  const bl     = [-0.35*S, 0, -0.5*S]; // body left
+  const br     = [ 0.35*S, 0, -0.5*S]; // body right
+  const tail   = [0,    0,   -2.5*S];  // tail point
+  const tl     = [-1.2*S, 0, -2.0*S];  // h-stab tip left
+  const tr     = [ 1.2*S, 0, -2.0*S];  // h-stab tip right
+  const tlr    = [-0.6*S, 0, -2.4*S];  // h-stab trailing left
+  const trr    = [ 0.6*S, 0, -2.4*S];  // h-stab trailing right
+
+  // Body has slight height for 3D feel
+  const bodyH = 0.25 * S;
+  const noseUp  = [0, bodyH*0.6, 3.0*S];
+  const topF    = [0, bodyH, 0.5*S];
+  const topR    = [0, bodyH, -1.5*S];
+  const botF    = [0, -bodyH*0.3, 0.5*S];
+
+  // Vertical tail fin
+  const finBase1 = [0, 0,      -1.5*S];
+  const finBase2 = [0, 0,      -2.5*S];
+  const finTop   = [0, 1.5*S,  -2.2*S];
+
+  // Build triangles (both sides for visibility)
+  const tris = [];
+  function tri(a,b,c) { tris.push(...a,...b,...c); }
+  function quad(a,b,c,d) { tri(a,b,c); tri(a,c,d); }
+
+  // ── Delta wings (flat, both sides visible) ──
+  // Left wing
+  tri(nose, wl, wlr);
+  tri(nose, wlr, bl);
+  // Right wing
+  tri(nose, wrr, wr);
+  tri(nose, br, wrr);
+  // Rear body
+  quad(bl, wlr, tail, [0,0,-0.5*S]);
+  quad(br, [0,0,-0.5*S], tail, wrr);
+  // Horizontal stabilizers
+  tri([0,0,-1.5*S], tl, tlr);
+  tri([0,0,-1.5*S], trr, tr);
+
+  // ── Fuselage top surface (gives 3D depth) ──
+  tri(noseUp, [-0.3*S, bodyH*0.3, 1.0*S], [0.3*S, bodyH*0.3, 1.0*S]);
+  quad([-0.3*S, bodyH*0.3, 1.0*S], topF, topR, [-0.3*S, bodyH*0.3, -1.0*S]);
+  quad([0.3*S, bodyH*0.3, 1.0*S], [0.3*S, bodyH*0.3, -1.0*S], topR, topF);
+  // Nose sides
+  tri(nose, noseUp, [-0.3*S, bodyH*0.3, 1.0*S]);
+  tri(nose, [0.3*S, bodyH*0.3, 1.0*S], noseUp);
+  // Fuselage sides
+  quad([-0.3*S, bodyH*0.3, 1.0*S], [-0.3*S, bodyH*0.3, -1.0*S], [-0.35*S, -bodyH*0.2, -1.0*S], [-0.35*S, -bodyH*0.2, 1.0*S]);
+  quad([0.35*S, -bodyH*0.2, 1.0*S], [0.35*S, -bodyH*0.2, -1.0*S], [0.3*S, bodyH*0.3, -1.0*S], [0.3*S, bodyH*0.3, 1.0*S]);
+  // Bottom
+  tri(nose, [0.35*S, -bodyH*0.2, 1.0*S], [-0.35*S, -bodyH*0.2, 1.0*S]);
+
+  // ── Vertical tail fin ──
+  tri(finBase1, finTop, finBase2);
+  tri(finBase2, finTop, finBase1); // back face
+
+  const positions = new Float32Array(tris);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ═══════════════════════════════════════════
+// Missile mesh — dart/arrow shape, single geo
+// ═══════════════════════════════════════════
+function createMissileGeo() {
+  const S = 50;
+  const tris = [];
+  function tri(a,b,c) { tris.push(...a,...b,...c); }
+
+  // Elongated body — 4-sided prism + nose cone + tail fins
+  const r = 0.15 * S; // body radius
+  const len = 3.0 * S;
+  const noseLen = 0.8 * S;
+
+  // 4 body vertices at front and back
+  const bf = [ // body front (z = len/2 - noseLen)
+    [ r,  0, len/2 - noseLen],
+    [ 0,  r, len/2 - noseLen],
+    [-r,  0, len/2 - noseLen],
+    [ 0, -r, len/2 - noseLen],
+  ];
+  const bb = [ // body back (z = -len/2)
+    [ r,  0, -len/2],
+    [ 0,  r, -len/2],
+    [-r,  0, -len/2],
+    [ 0, -r, -len/2],
+  ];
+  const nose = [0, 0, len/2];
+
+  // Nose cone
+  for (let i = 0; i < 4; i++) {
+    tri(nose, bf[i], bf[(i+1)%4]);
+  }
+  // Body sides
+  for (let i = 0; i < 4; i++) {
+    const j = (i+1)%4;
+    tri(bf[i], bb[i], bb[j]);
+    tri(bf[i], bb[j], bf[j]);
+  }
+
+  // Tail fins — 4 fins, cross pattern
+  const finLen = 0.8 * S;
+  const finW = 0.6 * S;
+  const finZ1 = -len/2;
+  const finZ2 = -len/2 + finLen;
+  // +X fin
+  tri([r, 0, finZ2], [r + finW, 0, finZ1], [r, 0, finZ1]);
+  tri([r, 0, finZ1], [r + finW, 0, finZ1], [r, 0, finZ2]); // back face
+  // -X fin
+  tri([-r, 0, finZ2], [-r, 0, finZ1], [-r - finW, 0, finZ1]);
+  tri([-r, 0, finZ2], [-r - finW, 0, finZ1], [-r, 0, finZ1]);
+  // +Y fin
+  tri([0, r, finZ2], [0, r + finW, finZ1], [0, r, finZ1]);
+  tri([0, r, finZ1], [0, r + finW, finZ1], [0, r, finZ2]);
+  // -Y fin
+  tri([0, -r, finZ2], [0, -r, finZ1], [0, -r - finW, finZ1]);
+  tri([0, -r, finZ2], [0, -r - finW, finZ1], [0, -r, finZ1]);
+
+  const positions = new Float32Array(tris);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Pre-build shared geometries (huge perf win — no per-object geo creation)
+const aircraftGeo = createAircraftGeo();
+const missileGeo = createMissileGeo();
+
+// ═══════════════════════════════════════════
+// Explosion (particle burst)
+// ═══════════════════════════════════════════
+function createExplosion(px, py, pz) {
+  const N = 30;
+  const pos = new Float32Array(N * 3);
+  const vel = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3] = px; pos[i*3+1] = py; pos[i*3+2] = pz;
+    vel[i*3]   = (Math.random()-0.5)*500;
+    vel[i*3+1] = (Math.random()-0.5)*500;
+    vel[i*3+2] = (Math.random()-0.5)*500;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xff8800, size: 100, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+  const pts = new THREE.Points(geo, mat);
+  pts.userData = { vel, life: 1.0 };
+  return pts;
+}
+
+// ═══════════════════════════════════════════
+// Main App State
+// ═══════════════════════════════════════════
+let scene, camera, renderer, controls;
+let acmiData = null;
+const objects3D = {};     // id → { mesh, trail, trailBuf, trailCount, alive, isMissile }
+const labelEls = {};      // id → { root, nameSpan, infoSpan, tacSpan }
+const objectStates = {};  // id → { lon,lat,alt,roll,pitch,yaw,alive,label }
+let currentTime = 0, playing = false, playSpeed = 1, trackingId = null;
+let lastFrameIdx = 0;
+const explosions = [];
+const TRAIL_MAX = 300;
+let objectListDirty = true;
+
+// Reusable vectors
+const _pos = new THREE.Vector3();
+const _camTarget = new THREE.Vector3();
+const _camOff = new THREE.Vector3();
+const _screenVec = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0,1,0);
+
+// ═══════════════════════════════════════════
+// Scene Init
+// ═══════════════════════════════════════════
+function initScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x080810);
+
+  camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 10, 500000);
+  camera.position.set(0, 15000, 25000);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 100;
+  controls.maxDistance = 200000;
+  controls.target.set(0, 5000, 0);
+
+  // Lighting — simple, fast
+  scene.add(new THREE.AmbientLight(0x556688, 2.0));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+  dir.position.set(1, 2, 1);
+  scene.add(dir);
+
+  // Ground
+  const groundGeo = new THREE.PlaneGeometry(400000, 400000);
+  const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ color: 0x0a1520, transparent: true, opacity: 0.5 }));
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  // Grid
+  const grid = new THREE.GridHelper(200000, 80, 0x1a2a3a, 0x111a22);
+  grid.position.y = 1;
+  scene.add(grid);
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+// ═══════════════════════════════════════════
+// Object creation (lazy, cached)
+// ═══════════════════════════════════════════
+function getOrCreate(id) {
+  if (objects3D[id]) return objects3D[id];
+
+  const def = acmiData.objectDefs[id] || {};
+  const isMissile = (def.type || '').includes('Missile');
+  const colorHex = getColor(def.color || 'White');
+
+  const mat = new THREE.MeshPhongMaterial({
+    color: colorHex,
+    emissive: colorHex,
+    emissiveIntensity: isMissile ? 0.5 : 0.25,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(isMissile ? missileGeo : aircraftGeo, mat);
+  mesh.visible = false;
+  scene.add(mesh);
+
+  // Trail
+  const trailBuf = new Float32Array(TRAIL_MAX * 3);
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailBuf, 3));
+  trailGeo.setDrawRange(0, 0);
+  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
+    color: colorHex, transparent: true, opacity: isMissile ? 0.5 : 0.35,
+  }));
+  trail.frustumCulled = false;
+  scene.add(trail);
+
+  // Label DOM — pre-create spans to avoid innerHTML later
+  const root = document.createElement('div');
+  root.className = 'label-3d';
+  root.style.color = getCSSColor(def.color || 'White');
+  root.style.display = 'none';
+  const nameSpan = document.createElement('div');
+  nameSpan.style.fontWeight = 'bold';
+  nameSpan.textContent = def.name || id;
+  const infoSpan = document.createElement('div');
+  infoSpan.style.fontSize = '10px';
+  infoSpan.style.opacity = '0.8';
+  const tacSpan = document.createElement('div');
+  tacSpan.style.fontSize = '10px';
+  tacSpan.style.color = '#ff0';
+  root.append(nameSpan, infoSpan, tacSpan);
+  document.getElementById('canvas-container').appendChild(root);
+  labelEls[id] = { root, nameSpan, infoSpan, tacSpan };
+
+  const obj = { mesh, trail, trailGeo, trailBuf, trailCount: 0, alive: true, isMissile };
+  objects3D[id] = obj;
+  objectListDirty = true;
+  return obj;
+}
+
+// ═══════════════════════════════════════════
+// Apply frames up to time
+// ═══════════════════════════════════════════
+function applyFramesUpTo(targetTime) {
+  if (!acmiData) return;
+  const frames = acmiData.frames;
+
+  // Backward seek → full reset
+  if (targetTime < currentTime) {
+    for (const id in objects3D) {
+      const o = objects3D[id];
+      o.alive = true;
+      o.mesh.visible = false;
+      o.trail.visible = false;
+      o.trailCount = 0;
+      o.trailGeo.setDrawRange(0, 0);
+    }
+    for (const id in objectStates) delete objectStates[id];
+    lastFrameIdx = 0;
+    objectListDirty = true;
+  }
+
+  const startIdx = lastFrameIdx;
+  for (let fi = startIdx; fi < frames.length; fi++) {
+    const frame = frames[fi];
+    if (frame.time > targetTime) break;
+    lastFrameIdx = fi;
+
+    for (let ui = 0; ui < frame.updates.length; ui++) {
+      const u = frame.updates[ui];
+      let st = objectStates[u.id];
+      if (!st) { st = { lon:0,lat:0,alt:0,roll:0,pitch:0,yaw:0,alive:true,label:'' }; objectStates[u.id] = st; }
+      if (u.lon !== undefined) { st.lon = u.lon; st.lat = u.lat; st.alt = u.alt; }
+      if (u.yaw !== undefined) { st.roll = u.roll; st.pitch = u.pitch; st.yaw = u.yaw; }
+      st.alive = true;
+    }
+
+    for (let ri = 0; ri < frame.removals.length; ri++) {
+      const rid = frame.removals[ri];
+      const st = objectStates[rid];
+      if (st && st.alive) {
+        st.alive = false;
+        objectListDirty = true;
+        const o = objects3D[rid];
+        if (o && o.alive) {
+          geoToWorld(_pos, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
+          const exp = createExplosion(_pos.x, _pos.y, _pos.z);
+          scene.add(exp);
+          explosions.push(exp);
+        }
+      }
+    }
+
+    // Events — only show if near playhead (avoid replaying on seek)
+    if (frame.time > currentTime - 0.2) {
+      for (let ei = 0; ei < frame.events.length; ei++) showEvent(frame.events[ei]);
+    }
+
+    // Labels
+    const lblKeys = Object.keys(frame.labels);
+    for (let li = 0; li < lblKeys.length; li++) {
+      const lid = lblKeys[li];
+      let st = objectStates[lid];
+      if (!st) { st = { lon:0,lat:0,alt:0,roll:0,pitch:0,yaw:0,alive:true,label:'' }; objectStates[lid] = st; }
+      st.label = frame.labels[lid];
+    }
+  }
+
+  currentTime = targetTime;
+}
+
+// ═══════════════════════════════════════════
+// Update visuals (called once per render frame)
+// ═══════════════════════════════════════════
+const _halfW = () => innerWidth * 0.5;
+const _halfH = () => innerHeight * 0.5;
+
+function updateVisuals() {
+  let aliveCount = 0;
+  const hw = _halfW(), hh = _halfH();
+
+  for (const id in objectStates) {
+    const st = objectStates[id];
+    const obj = getOrCreate(id);
+    geoToWorld(_pos, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
+
+    if (st.alive) {
+      aliveCount++;
+      obj.mesh.visible = true;
+      obj.mesh.position.copy(_pos);
+      obj.alive = true;
+
+      // Orientation: ACMI yaw=heading (0=North CW), convert to Three.js
+      // Three.js: rotation.y=0 means +Z forward. Heading 0°=North=+Z in our coord (well, -Z is north)
+      // Actually our mapping: z = -(lat) so north = -Z. So heading 0° (north) should point -Z
+      // In Three.js default, +Z is "forward". We want heading 0 → -Z
+      // So yawRad = PI + heading_rad  (or equivalently: -(heading - 180°) )
+      // heading 0° → mesh points -Z → yawRad = PI
+      // heading 90° (east) → mesh points +X → yawRad = PI/2
+      const yawRad = Math.PI - st.yaw * (Math.PI / 180);
+      const pitchRad = st.pitch * (Math.PI / 180);
+      const rollRad = st.roll * (Math.PI / 180);
+      obj.mesh.rotation.set(pitchRad, yawRad, rollRad, 'YXZ');
+
+      // Trail
+      const tc = obj.trailCount;
+      if (tc < TRAIL_MAX) {
+        const idx = tc * 3;
+        obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
+        obj.trailCount = tc + 1;
+      } else {
+        obj.trailBuf.copyWithin(0, 3);
+        const idx = (TRAIL_MAX - 1) * 3;
+        obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
+      }
+      obj.trailGeo.attributes.position.needsUpdate = true;
+      obj.trailGeo.setDrawRange(0, obj.trailCount);
+      obj.trail.visible = true;
+
+      // Label — update position via style transform, text via textContent (no innerHTML)
+      const lbl = labelEls[id];
+      if (lbl) {
+        _screenVec.copy(_pos).project(camera);
+        if (_screenVec.z < 1 && _screenVec.z > -1) {
+          const sx = (_screenVec.x + 1) * hw;
+          const sy = (1 - _screenVec.y) * hh;
+          lbl.root.style.display = '';
+          lbl.root.style.left = sx + 'px';
+          lbl.root.style.top = (sy - 20) + 'px';
+          const altFt = (st.alt * 3.281) | 0;
+          lbl.infoSpan.textContent = `ALT ${altFt}ft HDG ${(st.yaw+0.5)|0}°`;
+          lbl.tacSpan.textContent = st.label || '';
+        } else {
+          lbl.root.style.display = 'none';
+        }
+      }
+    } else {
+      if (obj.alive) { obj.alive = false; objectListDirty = true; }
+      obj.mesh.visible = false;
+      if (labelEls[id]) labelEls[id].root.style.display = 'none';
+    }
+  }
+
+  document.getElementById('info-objects').textContent = aliveCount;
+}
+
+// ═══════════════════════════════════════════
+// Event display
+// ═══════════════════════════════════════════
+function showEvent(evtStr) {
+  const p1 = evtStr.indexOf('|');
+  if (p1 === -1) return;
+  const p2 = evtStr.indexOf('|', p1 + 1);
+  if (p2 === -1) return;
+  const objId = evtStr.substring(p1 + 1, p2);
+  const msg = evtStr.substring(p2 + 1);
+  const def = acmiData?.objectDefs[objId] || {};
+
+  const el = document.createElement('div');
+  let cls = 'event-msg';
+  if (msg.includes('SPLASH') || msg.includes('HIT')) cls += ' hit-event';
+  else if (def.color === 'Blue') cls += ' blue-event';
+  else if (def.color === 'Red') cls += ' red-event';
+  el.className = cls;
+  el.textContent = `[${def.name || objId}] ${msg}`;
+  document.getElementById('event-log').appendChild(el);
+  setTimeout(() => el.remove(), 5500);
+}
+
+// ═══════════════════════════════════════════
+// Object list (only rebuild when dirty)
+// ═══════════════════════════════════════════
+function rebuildObjectList() {
+  if (!objectListDirty || !acmiData) return;
+  objectListDirty = false;
+
+  const list = document.getElementById('object-list');
+  list.textContent = '';
+
+  for (const [id, def] of Object.entries(acmiData.objectDefs)) {
+    if ((def.type || '').includes('Missile')) continue;
+    const alive = objectStates[id]?.alive !== false;
+    const el = document.createElement('div');
+    el.className = 'obj-entry' + (alive ? '' : ' destroyed') + (trackingId === id ? ' tracking' : '');
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = getCSSColor(def.color);
+    el.appendChild(dot);
+    el.appendChild(document.createTextNode(def.name || id));
+    el.addEventListener('click', () => {
+      trackingId = trackingId === id ? null : id;
+      document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.name}` : 'Free';
+      objectListDirty = true;
+    });
+    list.appendChild(el);
+  }
+
+  // Missiles
+  const missiles = Object.entries(acmiData.objectDefs).filter(([,d]) => (d.type||'').includes('Missile'));
+  if (missiles.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.className = 'section-title';
+    hdr.style.marginTop = '8px';
+    hdr.textContent = 'Missiles';
+    list.appendChild(hdr);
+    for (const [id, def] of missiles) {
+      const alive = objectStates[id]?.alive !== false;
+      const el = document.createElement('div');
+      el.className = 'obj-entry' + (alive ? '' : ' destroyed');
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = getCSSColor(def.color);
+      el.appendChild(dot);
+      el.appendChild(document.createTextNode(def.name || id));
+      list.appendChild(el);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+// Camera tracking
+// ═══════════════════════════════════════════
+function updateCamera() {
+  if (!trackingId) return;
+  const st = objectStates[trackingId];
+  if (!st || !st.alive) return;
+
+  geoToWorld(_camTarget, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
+  const yawRad = Math.PI - st.yaw * (Math.PI / 180);
+  _camOff.set(0, 1500, -3000).applyAxisAngle(_yAxis, yawRad);
+  _camOff.add(_camTarget);
+
+  camera.position.lerp(_camOff, 0.06);
+  controls.target.lerp(_camTarget, 0.12);
+}
+
+// ═══════════════════════════════════════════
+// Load ACMI
+// ═══════════════════════════════════════════
+function loadACMIIntoScene(data) {
+  acmiData = data;
+  currentTime = 0; playing = false; lastFrameIdx = 0; trackingId = null;
+
+  // Clear previous
+  for (const id in objects3D) {
+    scene.remove(objects3D[id].mesh);
+    scene.remove(objects3D[id].trail);
+    delete objects3D[id];
+  }
+  for (const id in labelEls) { labelEls[id].root.remove(); delete labelEls[id]; }
+  for (const id in objectStates) delete objectStates[id];
+  for (const e of explosions) scene.remove(e);
+  explosions.length = 0;
+
+  document.getElementById('scenario-title').textContent = data.title || 'ACMI Replay';
+  document.getElementById('info-duration').textContent = data.maxTime.toFixed(1) + 's';
+  document.getElementById('timeline-slider').max = Math.floor(data.maxTime * 10);
+  document.querySelectorAll('.hud').forEach(el => el.style.display = '');
+
+  // Center camera on action
+  const f0 = data.frames[0];
+  if (f0 && f0.updates.length) {
+    let cx=0,cy=0,cz=0,n=0;
+    for (const u of f0.updates) {
+      if (u.lon !== undefined) {
+        geoToWorld(_pos, u.lon, u.lat, u.alt, data.refLon, data.refLat);
+        cx += _pos.x; cy += _pos.y; cz += _pos.z; n++;
+      }
+    }
+    if (n) { cx/=n; cy/=n; cz/=n; controls.target.set(cx,cy,cz); camera.position.set(cx+5000,cy+8000,cz+15000); }
+  }
+
+  objectListDirty = true;
+  applyFramesUpTo(0);
+  updateVisuals();
+  rebuildObjectList();
+}
+
+// ═══════════════════════════════════════════
+// Animation loop
+// ═══════════════════════════════════════════
+let prevT = 0;
+function animate(ts) {
+  requestAnimationFrame(animate);
+  const dt = prevT ? (ts - prevT) * 0.001 : 0;
+  prevT = ts;
+
+  if (playing && acmiData) {
+    currentTime += dt * playSpeed;
+    if (currentTime >= acmiData.maxTime) {
+      currentTime = acmiData.maxTime;
+      playing = false;
+      document.getElementById('btn-play').innerHTML = '&#9654; Play';
+    }
+    applyFramesUpTo(currentTime);
+    document.getElementById('timeline-slider').value = (currentTime * 10) | 0;
+  }
+
+  // Update 3D positions/labels
+  if (acmiData) updateVisuals();
+
+  // Explosions
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const e = explosions[i];
+    e.userData.life -= dt * 0.5;
+    if (e.userData.life <= 0) { scene.remove(e); e.geometry.dispose(); e.material.dispose(); explosions.splice(i,1); continue; }
+    e.material.opacity = e.userData.life;
+    const p = e.geometry.attributes.position;
+    const v = e.userData.vel;
+    for (let j = 0; j < p.count; j++) {
+      p.array[j*3]   += v[j*3]   * dt;
+      p.array[j*3+1] += v[j*3+1] * dt;
+      p.array[j*3+2] += v[j*3+2] * dt;
+    }
+    p.needsUpdate = true;
+  }
+
+  // Object list rebuild (throttled to dirty flag)
+  rebuildObjectList();
+
+  updateCamera();
+  controls.update();
+
+  // Time display
+  const m = (currentTime / 60) | 0;
+  const s = (currentTime % 60).toFixed(1);
+  document.getElementById('time-display').textContent = `${String(m).padStart(2,'0')}:${s.padStart(4,'0')}`;
+  document.getElementById('info-time').textContent = currentTime.toFixed(1) + 's';
+
+  renderer.render(scene, camera);
+}
+
+// ═══════════════════════════════════════════
+// UI Controls
+// ═══════════════════════════════════════════
+function setupUI() {
+  const playBtn = document.getElementById('btn-play');
+  const slider = document.getElementById('timeline-slider');
+
+  playBtn.addEventListener('click', () => {
+    if (!acmiData) return;
+    playing = !playing;
+    playBtn.innerHTML = playing ? '&#9646;&#9646; Pause' : '&#9654; Play';
+    if (playing && currentTime >= acmiData.maxTime) { currentTime = 0; lastFrameIdx = 0; }
+  });
+
+  const speeds = [0.25, 0.5, 1, 2, 4, 8, 16];
+  document.getElementById('btn-faster').addEventListener('click', () => {
+    const i = speeds.indexOf(playSpeed);
+    if (i < speeds.length - 1) playSpeed = speeds[i+1];
+    document.getElementById('speed-display').textContent = playSpeed + 'x';
+  });
+  document.getElementById('btn-slower').addEventListener('click', () => {
+    const i = speeds.indexOf(playSpeed);
+    if (i > 0) playSpeed = speeds[i-1];
+    document.getElementById('speed-display').textContent = playSpeed + 'x';
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    if (!acmiData) return;
+    currentTime = 0; lastFrameIdx = 0; playing = false;
+    playBtn.innerHTML = '&#9654; Play';
+    for (const id in objects3D) {
+      const o = objects3D[id];
+      o.trailCount = 0; o.trailGeo.setDrawRange(0,0);
+      o.mesh.visible = false; o.trail.visible = false;
+    }
+    for (const id in objectStates) delete objectStates[id];
+    for (const e of explosions) { scene.remove(e); e.geometry.dispose(); e.material.dispose(); }
+    explosions.length = 0;
+    objectListDirty = true;
+    applyFramesUpTo(0);
+    slider.value = 0;
+  });
+
+  slider.addEventListener('input', () => {
+    if (!acmiData) return;
+    const t = slider.value * 0.1;
+    applyFramesUpTo(t);
+    currentTime = t;
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!acmiData) return;
+    if (e.code === 'Space') { e.preventDefault(); playBtn.click(); }
+    else if (e.code === 'Escape') { trackingId = null; document.getElementById('camera-mode-text').textContent = 'Free'; objectListDirty = true; }
+    else if (e.key === '+' || e.key === '=') document.getElementById('btn-faster').click();
+    else if (e.key === '-' || e.key === '_') document.getElementById('btn-slower').click();
+    else if (e.key === 'r' || e.key === 'R') document.getElementById('btn-reset').click();
+  });
+
+  // Double-click to track
+  renderer.domElement.addEventListener('dblclick', (e) => {
+    if (!acmiData) return;
+    const rc = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(
+      (e.clientX / innerWidth) * 2 - 1,
+      -(e.clientY / innerHeight) * 2 + 1
+    );
+    rc.setFromCamera(mouse, camera);
+
+    let closest = null, bestD = Infinity;
+    for (const id in objects3D) {
+      const o = objects3D[id];
+      if (!o.alive || !o.mesh.visible || o.isMissile) continue;
+      const hits = rc.intersectObject(o.mesh);
+      if (hits.length && hits[0].distance < bestD) { closest = id; bestD = hits[0].distance; }
+    }
+    if (closest) {
+      trackingId = trackingId === closest ? null : closest;
+      const def = acmiData.objectDefs[closest] || {};
+      document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.name}` : 'Free';
+      objectListDirty = true;
+    }
+  });
+}
+
+// ═══════════════════════════════════════════
+// Drag & Drop
+// ═══════════════════════════════════════════
+function setupDragDrop() {
+  document.addEventListener('dragover', e => { e.preventDefault(); document.getElementById('drop-zone').classList.add('drag-over'); });
+  document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.getElementById('drop-zone').classList.remove('drag-over'); });
+  document.addEventListener('drop', e => { e.preventDefault(); document.getElementById('drop-zone').classList.remove('drag-over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+  document.getElementById('file-input').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('drop-zone').classList.add('hidden');
+    loadACMIIntoScene(parseACMI(e.target.result));
+  };
+  reader.readAsText(file);
+}
+
+// ═══════════════════════════════════════════
+// Boot
+// ═══════════════════════════════════════════
+initScene();
+setupUI();
+setupDragDrop();
+animate(0);
+</script>
+</body>
+</html>
