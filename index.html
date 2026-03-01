@@ -599,7 +599,75 @@ function getOrCreate(id) {
 }
 
 // ═══════════════════════════════════════════
-// Apply frames up to time
+// Per-object position timelines for smooth interpolation
+// ═══════════════════════════════════════════
+const objectTimelines = {};  // id → [{t, lon, lat, alt, roll, pitch, yaw}, ...]
+const objectTlIdx = {};      // id → last binary-search index (cache for sequential playback)
+
+function buildTimelines(data) {
+  for (const id in objectTimelines) delete objectTimelines[id];
+  for (const id in objectTlIdx) delete objectTlIdx[id];
+  const lastRot = {};  // carry forward rotation if T= has only pos
+  for (let fi = 0; fi < data.frames.length; fi++) {
+    const frame = data.frames[fi];
+    for (let ui = 0; ui < frame.updates.length; ui++) {
+      const u = frame.updates[ui];
+      if (u.lon === undefined) continue;
+      let tl = objectTimelines[u.id];
+      if (!tl) { tl = []; objectTimelines[u.id] = tl; }
+      let rot = lastRot[u.id] || { roll:0, pitch:0, yaw:0 };
+      if (u.yaw !== undefined) { rot = { roll:u.roll, pitch:u.pitch, yaw:u.yaw }; lastRot[u.id] = rot; }
+      tl.push({ t: frame.time, lon:u.lon, lat:u.lat, alt:u.alt, roll:rot.roll, pitch:rot.pitch, yaw:rot.yaw });
+    }
+  }
+}
+
+// Binary search: find last index where tl[i].t <= time, with cached hint
+function tlSearch(tl, time, hint) {
+  const len = tl.length;
+  if (len === 0) return -1;
+  // Try the hint first (sequential playback optimization)
+  if (hint >= 0 && hint < len - 1 && tl[hint].t <= time && tl[hint + 1].t > time) return hint;
+  if (hint >= 0 && hint + 1 < len - 1 && tl[hint + 1].t <= time && tl[hint + 2].t > time) return hint + 1;
+  if (time >= tl[len - 1].t) return len - 1;
+  if (time < tl[0].t) return -1;
+  let lo = 0, hi = len - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (tl[mid].t <= time) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
+// Shortest-path angle lerp (handles 359°→1° wrapping)
+function lerpAngle(a, b, t) {
+  let d = b - a;
+  if (d > 180) d -= 360;
+  else if (d < -180) d += 360;
+  return a + d * t;
+}
+
+// Sample interpolated state from a timeline at given time
+function sampleTimeline(tl, time, hint) {
+  const idx = tlSearch(tl, time, hint);
+  if (idx < 0) { const a = tl[0]; return { idx:0, lon:a.lon, lat:a.lat, alt:a.alt, yaw:a.yaw, pitch:a.pitch, roll:a.roll }; }
+  if (idx >= tl.length - 1) { const a = tl[idx]; return { idx, lon:a.lon, lat:a.lat, alt:a.alt, yaw:a.yaw, pitch:a.pitch, roll:a.roll }; }
+  const a = tl[idx], b = tl[idx + 1];
+  const span = b.t - a.t;
+  const t = span > 0 ? (time - a.t) / span : 0;
+  return {
+    idx,
+    lon: a.lon + (b.lon - a.lon) * t,
+    lat: a.lat + (b.lat - a.lat) * t,
+    alt: a.alt + (b.alt - a.alt) * t,
+    yaw: lerpAngle(a.yaw, b.yaw, t),
+    pitch: a.pitch + (b.pitch - a.pitch) * t,
+    roll: lerpAngle(a.roll, b.roll, t),
+  };
+}
+
+// ═══════════════════════════════════════════
+// Apply frames up to time (events, removals, labels, alive)
 // ═══════════════════════════════════════════
 function applyFramesUpTo(targetTime) {
   if (!acmiData) return;
@@ -616,6 +684,7 @@ function applyFramesUpTo(targetTime) {
       o.trailGeo.setDrawRange(0, 0);
     }
     for (const id in objectStates) delete objectStates[id];
+    for (const id in objectTlIdx) objectTlIdx[id] = 0;
     lastFrameIdx = 0;
     objectListDirty = true;
   }
@@ -629,9 +698,7 @@ function applyFramesUpTo(targetTime) {
     for (let ui = 0; ui < frame.updates.length; ui++) {
       const u = frame.updates[ui];
       let st = objectStates[u.id];
-      if (!st) { st = { lon:0,lat:0,alt:0,roll:0,pitch:0,yaw:0,alive:true,label:'' }; objectStates[u.id] = st; }
-      if (u.lon !== undefined) { st.lon = u.lon; st.lat = u.lat; st.alt = u.alt; }
-      if (u.yaw !== undefined) { st.roll = u.roll; st.pitch = u.pitch; st.yaw = u.yaw; }
+      if (!st) { st = { alive:true, label:'' }; objectStates[u.id] = st; }
       st.alive = true;
     }
 
@@ -643,7 +710,12 @@ function applyFramesUpTo(targetTime) {
         objectListDirty = true;
         const o = objects3D[rid];
         if (o && o.alive) {
-          geoToWorld(_pos, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
+          // Use last timeline position for explosion
+          const tl = objectTimelines[rid];
+          if (tl && tl.length) {
+            const last = tl[tl.length - 1];
+            geoToWorld(_pos, last.lon, last.lat, last.alt, acmiData.refLon, acmiData.refLat);
+          }
           const exp = createExplosion(_pos.x, _pos.y, _pos.z);
           scene.add(exp);
           explosions.push(exp);
@@ -661,7 +733,7 @@ function applyFramesUpTo(targetTime) {
     for (let li = 0; li < lblKeys.length; li++) {
       const lid = lblKeys[li];
       let st = objectStates[lid];
-      if (!st) { st = { lon:0,lat:0,alt:0,roll:0,pitch:0,yaw:0,alive:true,label:'' }; objectStates[lid] = st; }
+      if (!st) { st = { alive:true, label:'' }; objectStates[lid] = st; }
       st.label = frame.labels[lid];
     }
   }
@@ -682,7 +754,20 @@ function updateVisuals() {
   for (const id in objectStates) {
     const st = objectStates[id];
     const obj = getOrCreate(id);
-    geoToWorld(_pos, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
+
+    // Sample interpolated position from pre-built timeline
+    const tl = objectTimelines[id];
+    let iLon, iLat, iAlt, iYaw, iPitch, iRoll;
+    if (tl && tl.length) {
+      const s = sampleTimeline(tl, currentTime, objectTlIdx[id] || 0);
+      objectTlIdx[id] = s.idx;
+      iLon = s.lon; iLat = s.lat; iAlt = s.alt;
+      iYaw = s.yaw; iPitch = s.pitch; iRoll = s.roll;
+    } else {
+      iLon = 0; iLat = 0; iAlt = 0; iYaw = 0; iPitch = 0; iRoll = 0;
+    }
+
+    geoToWorld(_pos, iLon, iLat, iAlt, acmiData.refLon, acmiData.refLat);
 
     if (st.alive) {
       aliveCount++;
@@ -690,16 +775,9 @@ function updateVisuals() {
       obj.mesh.position.copy(_pos);
       obj.alive = true;
 
-      // Orientation: ACMI yaw=heading (0=North CW), convert to Three.js
-      // Three.js: rotation.y=0 means +Z forward. Heading 0°=North=+Z in our coord (well, -Z is north)
-      // Actually our mapping: z = -(lat) so north = -Z. So heading 0° (north) should point -Z
-      // In Three.js default, +Z is "forward". We want heading 0 → -Z
-      // So yawRad = PI + heading_rad  (or equivalently: -(heading - 180°) )
-      // heading 0° → mesh points -Z → yawRad = PI
-      // heading 90° (east) → mesh points +X → yawRad = PI/2
-      const yawRad = Math.PI - st.yaw * (Math.PI / 180);
-      const pitchRad = st.pitch * (Math.PI / 180);
-      const rollRad = st.roll * (Math.PI / 180);
+      const yawRad = Math.PI - iYaw * (Math.PI / 180);
+      const pitchRad = iPitch * (Math.PI / 180);
+      const rollRad = iRoll * (Math.PI / 180);
       obj.mesh.rotation.set(pitchRad, yawRad, rollRad, 'YXZ');
 
       // Trail
@@ -727,8 +805,8 @@ function updateVisuals() {
           lbl.root.style.display = '';
           lbl.root.style.left = sx + 'px';
           lbl.root.style.top = (sy - 20) + 'px';
-          const altFt = (st.alt * 3.281) | 0;
-          lbl.infoSpan.textContent = `ALT ${altFt}ft HDG ${(st.yaw+0.5)|0}°`;
+          const altFt = (iAlt * 3.281) | 0;
+          lbl.infoSpan.textContent = `ALT ${altFt}ft HDG ${(iYaw+0.5)|0}°`;
           lbl.tacSpan.textContent = st.label || '';
         } else {
           lbl.root.style.display = 'none';
@@ -825,8 +903,14 @@ function updateCamera() {
   const st = objectStates[trackingId];
   if (!st || !st.alive) return;
 
-  geoToWorld(_camTarget, st.lon, st.lat, st.alt, acmiData.refLon, acmiData.refLat);
-  const yawRad = Math.PI - st.yaw * (Math.PI / 180);
+  // Sample interpolated position from timeline
+  const tl = objectTimelines[trackingId];
+  if (!tl || !tl.length) return;
+  const s = sampleTimeline(tl, currentTime, objectTlIdx[trackingId] || 0);
+  objectTlIdx[trackingId] = s.idx;
+
+  geoToWorld(_camTarget, s.lon, s.lat, s.alt, acmiData.refLon, acmiData.refLat);
+  const yawRad = Math.PI - s.yaw * (Math.PI / 180);
   _camOff.set(0, 1500, -3000).applyAxisAngle(_yAxis, yawRad);
   _camOff.add(_camTarget);
 
@@ -870,6 +954,7 @@ function loadACMIIntoScene(data) {
     if (n) { cx/=n; cy/=n; cz/=n; controls.target.set(cx,cy,cz); camera.position.set(cx+5000,cy+8000,cz+15000); }
   }
 
+  buildTimelines(data);
   objectListDirty = true;
   applyFramesUpTo(0);
   updateVisuals();

@@ -29,6 +29,7 @@ open index.html
 ## Features
 
 - **3D 재생** — Three.js 기반, 빌드 도구 없이 단일 HTML
+- **프레임 보간** — 오브젝트별 타임라인 + binary search 기반 선형 보간으로 부드러운 움직임
 - **항공기/미사일 형상** — 델타윙 전투기 + 다트형 미사일 (로폴리)
 - **팀 색상** — Blue/Red 항공기, Cyan/Orange 미사일
 - **비행 궤적** — 트레일 라인 표시
