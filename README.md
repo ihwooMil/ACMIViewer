@@ -2,6 +2,8 @@
 
 Tacview ACMI 2.1 flight recording files을 웹 브라우저에서 3D 재생하는 뷰어.
 
+**[Live Demo](https://ihwoomil.github.io/ACMIViewer/)**
+
 ![ACMI Viewer Screenshot](screenshot.png)
 
 ## Quick Start
