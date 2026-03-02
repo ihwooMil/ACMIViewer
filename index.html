@@ -178,8 +178,7 @@ canvas { display: block; }
 
 <div id="viz-panel" class="hud" style="display:none;">
   <div class="section-title">Overlays</div>
-  <label><input type="checkbox" id="viz-lar" checked> LAR Cones</label>
-  <label><input type="checkbox" id="viz-nez" checked> NEZ Cones</label>
+  <div id="viz-cone-list"></div>
   <label><input type="checkbox" id="viz-radar"> Radar Cone</label>
   <label><input type="checkbox" id="viz-wez"> WEZ Range</label>
   <label><input type="checkbox" id="viz-lock"> Lock Line</label>
@@ -622,7 +621,8 @@ const wezMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true,
 const lockMat = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.8 });
 
 const vizObjects = {};   // id → { radarCone, wezSphere, lockLine }
-const vizEnabled = { lar: true, nez: true, radar: false, wez: false, lock: false };
+const vizEnabled = { radar: false, wez: false, lock: false };
+const vizConeKeys = {};  // discovered cone types, e.g. { 'AIM120-LAR': true, 'AIM120-NEZ': true }
 
 const _vizQ1 = new THREE.Quaternion();
 const _vizQ2 = new THREE.Quaternion();
@@ -734,7 +734,7 @@ function getOrCreate(id) {
   let mesh;
   if (isCircle) {
     mesh = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
-      color: colorHex, transparent: true, opacity: 0.3,
+      color: colorHex, transparent: true, opacity: 0.10,
       depthWrite: false, side: THREE.DoubleSide,
     }));
     mesh.renderOrder = 1;
@@ -789,7 +789,9 @@ function getOrCreate(id) {
   if (isCircle) {
     const name = (def.Name || '').toUpperCase();
     obj.coneHalfAngle = name.includes('AIM9') || name.includes('AIM-9') ? 30 * DEG2RAD : 45 * DEG2RAD;
-    obj.coneType = name.includes('NEZ') ? 'nez' : 'lar';
+    // Extract weapon-category key from name, e.g. "B1 AIM120-LAR" → "AIM120-LAR"
+    const parts = (def.Name || '').replace(/^[A-Za-z]\d+\s+/, '').trim();
+    obj.coneType = parts || 'OTHER';
   }
   objects3D[id] = obj;
   objectListDirty = true;
@@ -989,7 +991,7 @@ function updateVisuals() {
 
       if (obj.isCircle) {
         // Cone envelope: orient with parent aircraft heading, scale by Radius
-        if (!(obj.coneType === 'nez' ? vizEnabled.nez : vizEnabled.lar)) { obj.mesh.visible = false; }
+        if (!vizConeKeys[obj.coneType]) { obj.mesh.visible = false; }
         else {
           const r = (objectProps[id] || {}).Radius || 0;
           const parentId = circleParents[id];
@@ -1457,6 +1459,33 @@ function loadACMIIntoScene(data) {
     if (bestId && bestDist < 0.01) circleParents[cid] = bestId;
   }
 
+  // Build dynamic cone type checkboxes from discovered Circle names
+  for (const k in vizConeKeys) delete vizConeKeys[k];
+  const coneListEl = document.getElementById('viz-cone-list');
+  coneListEl.innerHTML = '';
+  for (const cid in data.objectDefs) {
+    const cdef = data.objectDefs[cid];
+    if (!(cdef.Type || '').includes('Circle')) continue;
+    const parts = (cdef.Name || '').replace(/^[A-Za-z]\d+\s+/, '').trim();
+    const key = parts || 'OTHER';
+    if (vizConeKeys[key] === undefined) {
+      vizConeKeys[key] = true;  // default checked
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.addEventListener('change', () => { vizConeKeys[key] = cb.checked; });
+      const colorHex = getCSSColor(cdef.Color || 'White');
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' '));
+      const span = document.createElement('span');
+      span.textContent = key;
+      span.style.color = colorHex;
+      label.appendChild(span);
+      coneListEl.appendChild(label);
+    }
+  }
+
   objectListDirty = true;
   applyFramesUpTo(0);
   updateVisuals();
@@ -1584,8 +1613,6 @@ function setupUI() {
   });
 
   // Viz overlay checkboxes
-  document.getElementById('viz-lar').addEventListener('change', e => { vizEnabled.lar = e.target.checked; });
-  document.getElementById('viz-nez').addEventListener('change', e => { vizEnabled.nez = e.target.checked; });
   document.getElementById('viz-radar').addEventListener('change', e => { vizEnabled.radar = e.target.checked; });
   document.getElementById('viz-wez').addEventListener('change', e => { vizEnabled.wez = e.target.checked; });
   document.getElementById('viz-lock').addEventListener('change', e => { vizEnabled.lock = e.target.checked; });
