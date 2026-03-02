@@ -75,7 +75,7 @@ canvas { display: block; }
 #timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #4af; border-radius: 50%; cursor: grab; }
 #timeline-slider::-moz-range-thumb { width: 14px; height: 14px; background: #4af; border-radius: 50%; cursor: grab; border: none; }
 
-#event-log { position: fixed; bottom: 60px; left: 16px; z-index: 10; max-width: 500px; pointer-events: none; }
+#event-log { position: fixed; bottom: 60px; right: 16px; z-index: 10; max-width: 500px; pointer-events: none; text-align: right; }
 .event-msg {
   font-size: 13px; padding: 4px 10px; margin: 3px 0; border-radius: 4px;
   background: rgba(0,0,0,0.7); border-left: 3px solid #4af;
@@ -85,6 +85,28 @@ canvas { display: block; }
 .event-msg.red-event { border-left-color: #f44; }
 .event-msg.blue-event { border-left-color: #4af; }
 .event-msg.hit-event { border-left-color: #ff0; color: #ff0; font-weight: bold; }
+.event-msg.destroyed-event { border-left-color: #f44; color: #f44; }
+.event-msg.takeoff-event { border-left-color: #4f4; color: #4f4; }
+.event-msg.landed-event { border-left-color: #48f; color: #48f; }
+.event-msg.bookmark-event { border-left-color: #ff4; color: #ff4; }
+.event-msg.timeout-event { border-left-color: #f80; color: #f80; }
+
+#detail-panel {
+  bottom: 80px; left: 12px;
+  background: rgba(0,0,0,0.8); border: 1px solid #333; border-radius: 6px;
+  padding: 10px 14px; min-width: 260px; max-width: 320px; max-height: 45vh;
+  overflow-y: auto; font-size: 12px;
+}
+#detail-panel .section-title { color: #4af; font-size: 12px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+#detail-panel .detail-section-header { color: #6af; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 6px 0 3px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+#detail-panel .detail-row { color: #aaa; margin: 1px 0; display: flex; justify-content: space-between; gap: 12px; }
+#detail-panel .detail-row .detail-key { color: #888; white-space: nowrap; }
+#detail-panel .detail-row .detail-val { color: #ddd; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+
+.obj-entry .obj-extra { font-size: 10px; color: #888; margin-left: auto; }
+.obj-entry .obj-callsign { color: #8af; font-size: 11px; }
+.obj-type-header { color: #6af; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 8px 0 3px; padding-bottom: 2px; border-bottom: 1px solid #222; }
+
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 
@@ -101,6 +123,16 @@ canvas { display: block; }
   padding: 1px 4px; will-change: transform;
   transform: translate(-50%, -100%);
 }
+
+#viz-panel {
+  top: 170px; left: 12px;
+  background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 6px;
+  padding: 10px 14px; min-width: 140px;
+}
+#viz-panel .section-title { color: #4af; font-size: 12px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+#viz-panel label { display: block; font-size: 12px; color: #ccc; cursor: pointer; margin: 4px 0; }
+#viz-panel label:hover { color: #fff; }
+#viz-panel input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -129,6 +161,7 @@ canvas { display: block; }
   <div class="info-row">Time: <span id="info-time">0.0s</span></div>
   <div class="info-row">Objects: <span id="info-objects">0</span></div>
   <div class="info-row">Duration: <span id="info-duration">0.0s</span></div>
+  <div id="info-extra"></div>
 </div>
 
 <div id="object-panel" class="hud" style="display:none;">
@@ -136,7 +169,21 @@ canvas { display: block; }
   <div id="object-list"></div>
 </div>
 
+<div id="detail-panel" class="hud" style="display:none;">
+  <div class="section-title">Detail <span id="detail-name"></span></div>
+  <div id="detail-content"></div>
+</div>
+
 <div id="event-log"></div>
+
+<div id="viz-panel" class="hud" style="display:none;">
+  <div class="section-title">Overlays</div>
+  <label><input type="checkbox" id="viz-lar" checked> LAR Cones</label>
+  <label><input type="checkbox" id="viz-nez" checked> NEZ Cones</label>
+  <label><input type="checkbox" id="viz-radar"> Radar Cone</label>
+  <label><input type="checkbox" id="viz-wez"> WEZ Range</label>
+  <label><input type="checkbox" id="viz-lock"> Lock Line</label>
+</div>
 
 <div id="timeline-bar" class="hud" style="display:none;">
   <div id="timeline-controls">
@@ -164,12 +211,79 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ═══════════════════════════════════════════
+// ACMI 2.2 Property Sets
+// ═══════════════════════════════════════════
+const STATIC_TEXT_PROPS = new Set([
+  'Name','Type','AdditionalType','Parent','Next','ShortName','LongName','FullName',
+  'CallSign','Registration','Squawk','ICAO24','Pilot','Group','Country','Coalition',
+  'Color','Shape','Debug','FocusedTarget',
+  'LockedTarget','LockedTarget2','LockedTarget3','LockedTarget4',
+  'LockedTarget5','LockedTarget6','LockedTarget7','LockedTarget8','LockedTarget9'
+]);
+
+const DYNAMIC_NUM_PROPS = new Set([
+  'Importance','Slot','Disabled','Visible','Health',
+  'Length','Width','Height','Radius',
+  'IAS','CAS','TAS','Mach','AltimeterSetting','OnGround','AOA','AOS','AGL','HDG','HDM',
+  'Throttle','Throttle2','EngineRPM','EngineRPM2',
+  'Afterburner','AirBrakes','Flaps','LandingGear','LandingGearHandle',
+  'Tailhook','Parachute','DragChute',
+  'FuelWeight','FuelWeight2','FuelWeight3','FuelWeight4','FuelWeight5',
+  'FuelWeight6','FuelWeight7','FuelWeight8','FuelWeight9',
+  'FuelVolume','FuelVolume2','FuelVolume3','FuelVolume4','FuelVolume5',
+  'FuelVolume6','FuelVolume7','FuelVolume8','FuelVolume9',
+  'FuelFlowWeight','FuelFlowWeight2','FuelFlowWeight3','FuelFlowWeight4',
+  'FuelFlowWeight5','FuelFlowWeight6','FuelFlowWeight7','FuelFlowWeight8',
+  'FuelFlowVolume','FuelFlowVolume2','FuelFlowVolume3','FuelFlowVolume4',
+  'FuelFlowVolume5','FuelFlowVolume6','FuelFlowVolume7','FuelFlowVolume8',
+  'RadarMode','RadarAzimuth','RadarElevation','RadarRoll','RadarRange',
+  'RadarHorizontalBeamwidth','RadarVerticalBeamwidth',
+  'RadarRangeGateAzimuth','RadarRangeGateElevation','RadarRangeGateRoll',
+  'RadarRangeGateMin','RadarRangeGateMax',
+  'RadarRangeGateHorizontalBeamwidth','RadarRangeGateVerticalBeamwidth',
+  'LockedTargetMode','LockedTargetAzimuth','LockedTargetElevation','LockedTargetRange',
+  'EngagementMode','EngagementMode2','EngagementRange','EngagementRange2',
+  'VerticalEngagementRange','VerticalEngagementRange2',
+  'RollControlInput','PitchControlInput','YawControlInput',
+  'RollControlPosition','PitchControlPosition','YawControlPosition',
+  'RollTrimTab','PitchTrimTab','YawTrimTab',
+  'AileronLeft','AileronRight','Elevator','Rudder',
+  'LocalizerLateralDeviation','GlideslopeVerticalDeviation',
+  'LocalizerAngularDeviation','GlideslopeAngularDeviation',
+  'PilotHeadRoll','PilotHeadPitch','PilotHeadYaw',
+  'PilotEyeGazePitch','PilotEyeGazeYaw',
+  'VerticalGForce','LongitudinalGForce','LateralGForce',
+  'QNH','WindDirection','WindPitch','WindSpeed',
+  'TriggerPressed','ENL','HeartRate','SpO2',
+  'NR','NR2','RotorRPM','RotorRPM2'
+]);
+
+const DETAIL_CATEGORIES = [
+  { name: 'Identity', keys: ['Name','CallSign','ShortName','LongName','FullName','Registration','Squawk','ICAO24','Type','AdditionalType','Country','Coalition','Group','Pilot'] },
+  { name: 'Status', keys: ['Health','Disabled','Visible','Importance','OnGround'] },
+  { name: 'Speed', keys: ['IAS','CAS','TAS','Mach'] },
+  { name: 'Engine', keys: ['Throttle','Throttle2','EngineRPM','EngineRPM2','Afterburner','NR','NR2','RotorRPM','RotorRPM2'] },
+  { name: 'Flight Controls', keys: ['AirBrakes','Flaps','LandingGear','LandingGearHandle','Tailhook','Parachute','DragChute'] },
+  { name: 'Fuel', keys: ['FuelWeight','FuelWeight2','FuelWeight3','FuelWeight4','FuelWeight5','FuelWeight6','FuelWeight7','FuelWeight8','FuelWeight9','FuelVolume','FuelVolume2','FuelVolume3','FuelVolume4','FuelVolume5','FuelVolume6','FuelVolume7','FuelVolume8','FuelVolume9','FuelFlowWeight','FuelFlowWeight2','FuelFlowWeight3','FuelFlowWeight4','FuelFlowWeight5','FuelFlowWeight6','FuelFlowWeight7','FuelFlowWeight8','FuelFlowVolume','FuelFlowVolume2','FuelFlowVolume3','FuelFlowVolume4','FuelFlowVolume5','FuelFlowVolume6','FuelFlowVolume7','FuelFlowVolume8'] },
+  { name: 'Radar', keys: ['RadarMode','RadarAzimuth','RadarElevation','RadarRoll','RadarRange','RadarHorizontalBeamwidth','RadarVerticalBeamwidth'] },
+  { name: 'Targeting', keys: ['FocusedTarget','LockedTarget','LockedTarget2','LockedTarget3','LockedTargetMode','LockedTargetAzimuth','LockedTargetElevation','LockedTargetRange','EngagementMode','EngagementMode2','EngagementRange','EngagementRange2','VerticalEngagementRange','VerticalEngagementRange2'] },
+  { name: 'Controls', keys: ['RollControlInput','PitchControlInput','YawControlInput','RollControlPosition','PitchControlPosition','YawControlPosition','RollTrimTab','PitchTrimTab','YawTrimTab','AileronLeft','AileronRight','Elevator','Rudder'] },
+  { name: 'Navigation', keys: ['AGL','HDG','HDM','AOA','AOS','AltimeterSetting','LocalizerLateralDeviation','GlideslopeVerticalDeviation','LocalizerAngularDeviation','GlideslopeAngularDeviation'] },
+  { name: 'G-Force', keys: ['VerticalGForce','LongitudinalGForce','LateralGForce'] },
+  { name: 'Pilot', keys: ['PilotHeadRoll','PilotHeadPitch','PilotHeadYaw','PilotEyeGazePitch','PilotEyeGazeYaw'] },
+  { name: 'Environment', keys: ['WindDirection','WindPitch','WindSpeed','QNH'] },
+  { name: 'Other', keys: ['TriggerPressed','ENL','HeartRate','SpO2','Length','Width','Height','Radius','Slot'] },
+];
+
+// ═══════════════════════════════════════════
 // ACMI Parser
 // ═══════════════════════════════════════════
 function parseACMI(text) {
   const lines = text.split('\n');
   const data = {
     refLat: 0, refLon: 0, refTime: '', title: '',
+    dataSource: '', dataRecorder: '', recordingTime: '', author: '',
+    category: '', briefing: '', debriefing: '', comments: '', mapId: '',
     frames: [], objectDefs: {}, maxTime: 0,
   };
   let currentFrame = null;
@@ -195,7 +309,16 @@ function parseACMI(text) {
       if (key === 'ReferenceLatitude') data.refLat = parseFloat(val);
       else if (key === 'ReferenceLongitude') data.refLon = parseFloat(val);
       else if (key === 'ReferenceTime') data.refTime = val;
-      else if (key === 'Title') { data.title = val; }
+      else if (key === 'Title') data.title = val;
+      else if (key === 'DataSource') data.dataSource = val;
+      else if (key === 'DataRecorder') data.dataRecorder = val;
+      else if (key === 'RecordingTime') data.recordingTime = val;
+      else if (key === 'Author') data.author = val;
+      else if (key === 'Category') data.category = val;
+      else if (key === 'Briefing') data.briefing = val;
+      else if (key === 'Debriefing') data.debriefing = val;
+      else if (key === 'Comments') data.comments = val;
+      else if (key === 'MapId') data.mapId = val;
       else if (key === 'Event' && currentFrame) currentFrame.events.push(val);
       continue;
     }
@@ -212,6 +335,7 @@ function parseACMI(text) {
 
     // Fast key=value split — handle T= specially (contains |)
     const update = { id };
+    let updateHasData = false;
     let i = 0;
     while (i < rest.length) {
       const eqi = rest.indexOf('=', i);
@@ -236,22 +360,33 @@ function parseACMI(text) {
 
       if (key === 'T') {
         const parts = val.split('|');
-        update.lon = +parts[0] || 0;
-        update.lat = +parts[1] || 0;
-        update.alt = +parts[2] || 0;
-        if (parts.length >= 6) {
+        const plen = parts.length;
+        if (plen >= 3) {
+          update.lon = +parts[0] || 0;
+          update.lat = +parts[1] || 0;
+          update.alt = +parts[2] || 0;
+        }
+        if (plen === 5) {
+          // Native flat world: lon|lat|alt|U|V
+          update.U = +parts[3] || 0;
+          update.V = +parts[4] || 0;
+        } else if (plen >= 6) {
           update.roll = +parts[3] || 0;
           update.pitch = +parts[4] || 0;
           update.yaw = +parts[5] || 0;
         }
-      } else if (key === 'Name') {
-        (data.objectDefs[id] || (data.objectDefs[id] = {})).name = val;
-      } else if (key === 'Type') {
-        (data.objectDefs[id] || (data.objectDefs[id] = {})).type = val;
-      } else if (key === 'Color') {
-        (data.objectDefs[id] || (data.objectDefs[id] = {})).color = val;
-      } else if (key === 'Pilot') {
-        (data.objectDefs[id] || (data.objectDefs[id] = {})).pilot = val;
+        if (plen === 9) {
+          // Full flat world: lon|lat|alt|roll|pitch|yaw|U|V|heading
+          update.U = +parts[6] || 0;
+          update.V = +parts[7] || 0;
+          update.heading = +parts[8] || 0;
+        }
+        updateHasData = true;
+      } else if (STATIC_TEXT_PROPS.has(key)) {
+        (data.objectDefs[id] || (data.objectDefs[id] = {}))[key] = val;
+      } else if (DYNAMIC_NUM_PROPS.has(key)) {
+        update[key] = parseFloat(val);
+        updateHasData = true;
       } else if (key === 'Label' && currentFrame) {
         currentFrame.labels[id] = val;
       }
@@ -259,7 +394,7 @@ function parseACMI(text) {
       i = end + 1;
     }
 
-    if (currentFrame && update.lon !== undefined) {
+    if (currentFrame && updateHasData) {
       currentFrame.updates.push(update);
     }
   }
@@ -455,6 +590,46 @@ const aircraftGeo = createAircraftGeo();
 const missileGeo = createMissileGeo();
 
 // ═══════════════════════════════════════════
+// Radar / WEZ / Lock — shared geo & materials
+// ═══════════════════════════════════════════
+const DEG2RAD = Math.PI / 180;
+
+function createUnitConeGeo(segments) {
+  const tris = [];
+  for (let i = 0; i < segments; i++) {
+    const a1 = (i / segments) * Math.PI * 2;
+    const a2 = ((i + 1) / segments) * Math.PI * 2;
+    tris.push(
+      0, 0, 0,
+      Math.cos(a1), Math.sin(a1), 1,
+      Math.cos(a2), Math.sin(a2), 1
+    );
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris), 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const coneGeo = createUnitConeGeo(24);
+const sphereGeo = new THREE.SphereGeometry(1, 16, 12);
+
+// Circle parent mapping (circleId → parentAircraftId)
+const circleParents = {};
+
+const radarMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.15, depthWrite: false, side: THREE.DoubleSide });
+const wezMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide });
+const lockMat = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.8 });
+
+const vizObjects = {};   // id → { radarCone, wezSphere, lockLine }
+const vizEnabled = { lar: true, nez: true, radar: false, wez: false, lock: false };
+
+const _vizQ1 = new THREE.Quaternion();
+const _vizQ2 = new THREE.Quaternion();
+const _vizEuler = new THREE.Euler();
+const _vizDir = new THREE.Vector3();
+
+// ═══════════════════════════════════════════
 // Explosion (particle burst)
 // ═══════════════════════════════════════════
 function createExplosion(px, py, pz) {
@@ -483,6 +658,7 @@ let acmiData = null;
 const objects3D = {};     // id → { mesh, trail, trailBuf, trailCount, alive, isMissile }
 const labelEls = {};      // id → { root, nameSpan, infoSpan, tacSpan }
 const objectStates = {};  // id → { lon,lat,alt,roll,pitch,yaw,alive,label }
+const objectProps = {};   // id → { key: value, ... } latest dynamic property values
 let currentTime = 0, playing = false, playSpeed = 1, trackingId = null;
 let lastFrameIdx = 0;
 let lastEventFrameIdx = -1;  // track last frame whose events were shown (prevent duplicates)
@@ -550,50 +726,71 @@ function getOrCreate(id) {
   if (objects3D[id]) return objects3D[id];
 
   const def = acmiData.objectDefs[id] || {};
-  const isMissile = (def.type || '').includes('Missile');
-  const colorHex = getColor(def.color || 'White');
+  const typeStr = def.Type || '';
+  const isCircle = typeStr.includes('Circle');
+  const isMissile = !isCircle && typeStr.includes('Missile');
+  const colorHex = getColor(def.Color || 'White');
 
-  const mat = new THREE.MeshPhongMaterial({
-    color: colorHex,
-    emissive: colorHex,
-    emissiveIntensity: isMissile ? 0.5 : 0.25,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(isMissile ? missileGeo : aircraftGeo, mat);
+  let mesh;
+  if (isCircle) {
+    mesh = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+      color: colorHex, transparent: true, opacity: 0.3,
+      depthWrite: false, side: THREE.DoubleSide,
+    }));
+    mesh.renderOrder = 1;
+  } else {
+    const mat = new THREE.MeshPhongMaterial({
+      color: colorHex,
+      emissive: colorHex,
+      emissiveIntensity: isMissile ? 0.5 : 0.25,
+      flatShading: true,
+      side: THREE.DoubleSide,
+    });
+    mesh = new THREE.Mesh(isMissile ? missileGeo : aircraftGeo, mat);
+  }
   mesh.visible = false;
   scene.add(mesh);
 
-  // Trail
-  const trailBuf = new Float32Array(TRAIL_MAX * 3);
-  const trailGeo = new THREE.BufferGeometry();
-  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailBuf, 3));
-  trailGeo.setDrawRange(0, 0);
-  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
-    color: colorHex, transparent: true, opacity: isMissile ? 0.5 : 0.35,
-  }));
-  trail.frustumCulled = false;
-  scene.add(trail);
+  // Trail (skip for circles — no trail needed)
+  let trail = null, trailGeo = null, trailBuf = null;
+  if (!isCircle) {
+    trailBuf = new Float32Array(TRAIL_MAX * 3);
+    trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailBuf, 3));
+    trailGeo.setDrawRange(0, 0);
+    trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
+      color: colorHex, transparent: true, opacity: isMissile ? 0.5 : 0.35,
+    }));
+    trail.frustumCulled = false;
+    scene.add(trail);
+  }
 
-  // Label DOM — pre-create spans to avoid innerHTML later
-  const root = document.createElement('div');
-  root.className = 'label-3d';
-  root.style.color = getCSSColor(def.color || 'White');
-  root.style.display = 'none';
-  const nameSpan = document.createElement('div');
-  nameSpan.style.fontWeight = 'bold';
-  nameSpan.textContent = def.name || id;
-  const infoSpan = document.createElement('div');
-  infoSpan.style.fontSize = '10px';
-  infoSpan.style.opacity = '0.8';
-  const tacSpan = document.createElement('div');
-  tacSpan.style.fontSize = '10px';
-  tacSpan.style.color = '#ff0';
-  root.append(nameSpan, infoSpan, tacSpan);
-  document.getElementById('canvas-container').appendChild(root);
-  labelEls[id] = { root, nameSpan, infoSpan, tacSpan };
+  // Label DOM (skip for circles)
+  if (!isCircle) {
+    const root = document.createElement('div');
+    root.className = 'label-3d';
+    root.style.color = getCSSColor(def.Color || 'White');
+    root.style.display = 'none';
+    const nameSpan = document.createElement('div');
+    nameSpan.style.fontWeight = 'bold';
+    nameSpan.textContent = def.Name || id;
+    const infoSpan = document.createElement('div');
+    infoSpan.style.fontSize = '10px';
+    infoSpan.style.opacity = '0.8';
+    const tacSpan = document.createElement('div');
+    tacSpan.style.fontSize = '10px';
+    tacSpan.style.color = '#ff0';
+    root.append(nameSpan, infoSpan, tacSpan);
+    document.getElementById('canvas-container').appendChild(root);
+    labelEls[id] = { root, nameSpan, infoSpan, tacSpan };
+  }
 
-  const obj = { mesh, trail, trailGeo, trailBuf, trailCount: 0, alive: true, isMissile };
+  const obj = { mesh, trail, trailGeo, trailBuf, trailCount: 0, alive: true, isMissile, isCircle };
+  if (isCircle) {
+    const name = (def.Name || '').toUpperCase();
+    obj.coneHalfAngle = name.includes('AIM9') || name.includes('AIM-9') ? 30 * DEG2RAD : 45 * DEG2RAD;
+    obj.coneType = name.includes('NEZ') ? 'nez' : 'lar';
+  }
   objects3D[id] = obj;
   objectListDirty = true;
   return obj;
@@ -680,14 +877,18 @@ function applyFramesUpTo(targetTime) {
       const o = objects3D[id];
       o.alive = true;
       o.mesh.visible = false;
-      o.trail.visible = false;
-      o.trailCount = 0;
-      o.trailGeo.setDrawRange(0, 0);
+      if (o.trail) { o.trail.visible = false; o.trailCount = 0; o.trailGeo.setDrawRange(0, 0); }
     }
     for (const id in objectStates) delete objectStates[id];
+    for (const id in objectProps) delete objectProps[id];
     for (const id in objectTlIdx) objectTlIdx[id] = 0;
+    for (const id in vizObjects) {
+      const viz = vizObjects[id];
+      if (viz.radarCone) viz.radarCone.visible = false;
+      if (viz.wezSphere) viz.wezSphere.visible = false;
+      if (viz.lockLine) viz.lockLine.visible = false;
+    }
     lastFrameIdx = 0;
-    lastEventFrameIdx = -1;
     objectListDirty = true;
   }
 
@@ -702,6 +903,14 @@ function applyFramesUpTo(targetTime) {
       let st = objectStates[u.id];
       if (!st) { st = { alive:true, label:'' }; objectStates[u.id] = st; }
       st.alive = true;
+      // Merge dynamic properties (carry-forward: old values persist, new overwrite)
+      for (const key in u) {
+        if (key === 'id' || key === 'lon' || key === 'lat' || key === 'alt' ||
+            key === 'roll' || key === 'pitch' || key === 'yaw' ||
+            key === 'U' || key === 'V' || key === 'heading') continue;
+        if (!objectProps[u.id]) objectProps[u.id] = {};
+        objectProps[u.id][key] = u[key];
+      }
     }
 
     for (let ri = 0; ri < frame.removals.length; ri++) {
@@ -774,56 +983,231 @@ function updateVisuals() {
     geoToWorld(_pos, iLon, iLat, iAlt, acmiData.refLon, acmiData.refLat);
 
     if (st.alive) {
-      aliveCount++;
       obj.mesh.visible = true;
       obj.mesh.position.copy(_pos);
       obj.alive = true;
 
-      const yawRad = Math.PI - iYaw * (Math.PI / 180);
-      const pitchRad = iPitch * (Math.PI / 180);
-      const rollRad = iRoll * (Math.PI / 180);
-      obj.mesh.rotation.set(pitchRad, yawRad, rollRad, 'YXZ');
-
-      // Trail
-      const tc = obj.trailCount;
-      if (tc < TRAIL_MAX) {
-        const idx = tc * 3;
-        obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
-        obj.trailCount = tc + 1;
+      if (obj.isCircle) {
+        // Cone envelope: orient with parent aircraft heading, scale by Radius
+        if (!(obj.coneType === 'nez' ? vizEnabled.nez : vizEnabled.lar)) { obj.mesh.visible = false; }
+        else {
+          const r = (objectProps[id] || {}).Radius || 0;
+          const parentId = circleParents[id];
+          if (parentId && r > 0) {
+            const ptl = objectTimelines[parentId];
+            if (ptl && ptl.length) {
+              const ps = sampleTimeline(ptl, currentTime, objectTlIdx[parentId] || 0);
+              _vizEuler.set(ps.pitch * DEG2RAD, Math.PI - ps.yaw * DEG2RAD, ps.roll * DEG2RAD, 'YXZ');
+              obj.mesh.quaternion.setFromEuler(_vizEuler);
+            }
+            const baseR = r * Math.tan(obj.coneHalfAngle || 45 * DEG2RAD);
+            obj.mesh.scale.set(baseR, baseR, r);
+          } else {
+            obj.mesh.visible = false;
+          }
+        }
       } else {
-        obj.trailBuf.copyWithin(0, 3);
-        const idx = (TRAIL_MAX - 1) * 3;
-        obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
-      }
-      obj.trailGeo.attributes.position.needsUpdate = true;
-      obj.trailGeo.setDrawRange(0, obj.trailCount);
-      obj.trail.visible = true;
+        aliveCount++;
+        const yawRad = Math.PI - iYaw * (Math.PI / 180);
+        const pitchRad = iPitch * (Math.PI / 180);
+        const rollRad = iRoll * (Math.PI / 180);
+        obj.mesh.rotation.set(pitchRad, yawRad, rollRad, 'YXZ');
 
-      // Label — update position via style transform, text via textContent (no innerHTML)
-      const lbl = labelEls[id];
-      if (lbl) {
-        _screenVec.copy(_pos).project(camera);
-        if (_screenVec.z < 1 && _screenVec.z > -1) {
-          const sx = (_screenVec.x + 1) * hw;
-          const sy = (1 - _screenVec.y) * hh;
-          lbl.root.style.display = '';
-          lbl.root.style.left = sx + 'px';
-          lbl.root.style.top = (sy - 20) + 'px';
-          const altFt = (iAlt * 3.281) | 0;
-          lbl.infoSpan.textContent = `ALT ${altFt}ft HDG ${(iYaw+0.5)|0}°`;
-          lbl.tacSpan.textContent = st.label || '';
+        // Trail
+        const tc = obj.trailCount;
+        if (tc < TRAIL_MAX) {
+          const idx = tc * 3;
+          obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
+          obj.trailCount = tc + 1;
         } else {
-          lbl.root.style.display = 'none';
+          obj.trailBuf.copyWithin(0, 3);
+          const idx = (TRAIL_MAX - 1) * 3;
+          obj.trailBuf[idx] = _pos.x; obj.trailBuf[idx+1] = _pos.y; obj.trailBuf[idx+2] = _pos.z;
+        }
+        obj.trailGeo.attributes.position.needsUpdate = true;
+        obj.trailGeo.setDrawRange(0, obj.trailCount);
+        obj.trail.visible = true;
+
+        // Label — update position via style transform, text via textContent (no innerHTML)
+        const lbl = labelEls[id];
+        if (lbl) {
+          _screenVec.copy(_pos).project(camera);
+          if (_screenVec.z < 1 && _screenVec.z > -1) {
+            const sx = (_screenVec.x + 1) * hw;
+            const sy = (1 - _screenVec.y) * hh;
+            lbl.root.style.display = '';
+            lbl.root.style.left = sx + 'px';
+            lbl.root.style.top = (sy - 20) + 'px';
+            const altFt = (iAlt * 3.281) | 0;
+            const dp = objectProps[id] || {};
+            const defL = acmiData.objectDefs[id] || {};
+            let info = `ALT ${altFt}ft HDG ${(iYaw+0.5)|0}°`;
+            if (dp.IAS !== undefined) info += ` IAS ${dp.IAS|0}kts`;
+            else if (dp.TAS !== undefined) info += ` TAS ${dp.TAS|0}kts`;
+            else if (dp.Mach !== undefined) info += ` M${dp.Mach.toFixed(2)}`;
+            lbl.infoSpan.textContent = info;
+            lbl.nameSpan.textContent = defL.CallSign || defL.Name || id;
+            lbl.tacSpan.textContent = st.label || '';
+          } else {
+            lbl.root.style.display = 'none';
+          }
+        }
+
+        // ── Radar / WEZ / Lock overlays ──
+        {
+          const dp = objectProps[id] || {};
+          let viz = vizObjects[id];
+
+          // Radar Cone
+          if (vizEnabled.radar && dp.RadarRange) {
+            if (!viz) viz = vizObjects[id] = {};
+            if (!viz.radarCone) { viz.radarCone = new THREE.Mesh(coneGeo, radarMat); viz.radarCone.renderOrder = 1; scene.add(viz.radarCone); }
+            const range = dp.RadarRange;
+            const hBW = (dp.RadarHorizontalBeamwidth || 10) * DEG2RAD;
+            const vBW = (dp.RadarVerticalBeamwidth || 10) * DEG2RAD;
+            const rAz = (dp.RadarAzimuth || 0) * DEG2RAD;
+            const rEl = (dp.RadarElevation || 0) * DEG2RAD;
+            viz.radarCone.position.copy(_pos);
+            _vizEuler.set(pitchRad, yawRad, rollRad, 'YXZ');
+            _vizQ1.setFromEuler(_vizEuler);
+            _vizEuler.set(-rEl, -rAz, 0, 'YXZ');
+            _vizQ2.setFromEuler(_vizEuler);
+            _vizQ1.multiply(_vizQ2);
+            viz.radarCone.quaternion.copy(_vizQ1);
+            viz.radarCone.scale.set(range * Math.tan(hBW / 2), range * Math.tan(vBW / 2), range);
+            viz.radarCone.visible = true;
+          } else if (viz && viz.radarCone) {
+            viz.radarCone.visible = false;
+          }
+
+          // WEZ Sphere
+          if (vizEnabled.wez && dp.EngagementRange) {
+            if (!viz) viz = vizObjects[id] = {};
+            if (!viz.wezSphere) { viz.wezSphere = new THREE.Mesh(sphereGeo, wezMat); viz.wezSphere.renderOrder = 1; scene.add(viz.wezSphere); }
+            const er = dp.EngagementRange;
+            const ver = dp.VerticalEngagementRange || er;
+            viz.wezSphere.position.copy(_pos);
+            viz.wezSphere.scale.set(er, ver, er);
+            viz.wezSphere.visible = true;
+          } else if (viz && viz.wezSphere) {
+            viz.wezSphere.visible = false;
+          }
+
+          // Lock Line
+          if (vizEnabled.lock && dp.LockedTargetRange) {
+            if (!viz) viz = vizObjects[id] = {};
+            if (!viz.lockLine) {
+              const lg = new THREE.BufferGeometry();
+              lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+              viz.lockLine = new THREE.Line(lg, lockMat);
+              scene.add(viz.lockLine);
+            }
+            const lr = dp.LockedTargetRange;
+            const lAz = (dp.LockedTargetAzimuth || 0) * DEG2RAD;
+            const lEl = (dp.LockedTargetElevation || 0) * DEG2RAD;
+            _vizDir.set(Math.sin(lAz) * Math.cos(lEl) * lr, Math.sin(lEl) * lr, Math.cos(lAz) * Math.cos(lEl) * lr);
+            _vizEuler.set(pitchRad, yawRad, rollRad, 'YXZ');
+            _vizQ1.setFromEuler(_vizEuler);
+            _vizDir.applyQuaternion(_vizQ1);
+            const lp = viz.lockLine.geometry.attributes.position;
+            lp.array[0] = _pos.x; lp.array[1] = _pos.y; lp.array[2] = _pos.z;
+            lp.array[3] = _pos.x + _vizDir.x; lp.array[4] = _pos.y + _vizDir.y; lp.array[5] = _pos.z + _vizDir.z;
+            lp.needsUpdate = true;
+            viz.lockLine.visible = true;
+          } else if (viz && viz.lockLine) {
+            viz.lockLine.visible = false;
+          }
         }
       }
     } else {
       if (obj.alive) { obj.alive = false; objectListDirty = true; }
       obj.mesh.visible = false;
       if (labelEls[id]) labelEls[id].root.style.display = 'none';
+      // Hide viz overlays for dead objects
+      const vizD = vizObjects[id];
+      if (vizD) {
+        if (vizD.radarCone) vizD.radarCone.visible = false;
+        if (vizD.wezSphere) vizD.wezSphere.visible = false;
+        if (vizD.lockLine) vizD.lockLine.visible = false;
+      }
     }
   }
 
   document.getElementById('info-objects').textContent = aliveCount;
+
+  // Update detail panel for tracked object
+  updateDetailPanel();
+}
+
+// ═══════════════════════════════════════════
+// Detail Panel
+// ═══════════════════════════════════════════
+let _lastDetailUpdate = 0;
+
+function updateDetailPanel() {
+  const panel = document.getElementById('detail-panel');
+  if (!trackingId || !acmiData) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const now = performance.now();
+  if (now - _lastDetailUpdate < 250) return;
+  _lastDetailUpdate = now;
+
+  const def = acmiData.objectDefs[trackingId] || {};
+  const dp = objectProps[trackingId] || {};
+
+  document.getElementById('detail-name').textContent = def.CallSign || def.Name || trackingId;
+
+  const tl = objectTimelines[trackingId];
+  let altM, hdgDeg;
+  if (tl && tl.length) {
+    const s = sampleTimeline(tl, currentTime, objectTlIdx[trackingId] || 0);
+    altM = s.alt; hdgDeg = s.yaw;
+  }
+
+  const content = document.getElementById('detail-content');
+  content.textContent = '';
+
+  // Position section (from interpolation)
+  addDetailSection(content, 'Position', [
+    ['ALT', altM !== undefined ? `${(altM*3.281)|0}ft / ${Math.round(altM)}m` : '--'],
+    ['HDG', hdgDeg !== undefined ? `${(hdgDeg+0.5)|0}\u00B0` : '--'],
+  ]);
+
+  for (const cat of DETAIL_CATEGORIES) {
+    const rows = [];
+    for (const key of cat.keys) {
+      const val = def[key] ?? dp[key];
+      if (val === undefined || val === null) continue;
+      let display;
+      if (typeof val === 'number') {
+        display = Number.isInteger(val) ? String(val) : val.toFixed(2);
+      } else {
+        display = String(val);
+      }
+      rows.push([key, display]);
+    }
+    if (rows.length > 0) addDetailSection(content, cat.name, rows);
+  }
+}
+
+function addDetailSection(parent, title, rows) {
+  const hdr = document.createElement('div');
+  hdr.className = 'detail-section-header';
+  hdr.textContent = title;
+  parent.appendChild(hdr);
+  for (const [key, val] of rows) {
+    const row = document.createElement('div');
+    row.className = 'detail-row';
+    const kSpan = document.createElement('span');
+    kSpan.className = 'detail-key';
+    kSpan.textContent = key;
+    const vSpan = document.createElement('span');
+    vSpan.className = 'detail-val';
+    vSpan.textContent = val;
+    row.append(kSpan, vSpan);
+    parent.appendChild(row);
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -834,26 +1218,42 @@ const MAX_EVENT_MSGS = 6;
 function showEvent(evtStr) {
   const p1 = evtStr.indexOf('|');
   if (p1 === -1) return;
+  const evtType = evtStr.substring(0, p1);
   const p2 = evtStr.indexOf('|', p1 + 1);
-  if (p2 === -1) return;
-  const objId = evtStr.substring(p1 + 1, p2);
-  const msg = evtStr.substring(p2 + 1);
-  const def = acmiData?.objectDefs[objId] || {};
+
+  let objId = '', msg = '', def = {};
+  if (p2 !== -1) {
+    objId = evtStr.substring(p1 + 1, p2);
+    msg = evtStr.substring(p2 + 1);
+    def = acmiData?.objectDefs[objId] || {};
+  } else {
+    msg = evtStr.substring(p1 + 1);
+  }
 
   const container = document.getElementById('event-log');
-
-  // Remove oldest messages if exceeding limit
   while (container.childElementCount >= MAX_EVENT_MSGS) {
     container.removeChild(container.firstElementChild);
   }
 
   const el = document.createElement('div');
   let cls = 'event-msg';
-  if (msg.includes('SPLASH') || msg.includes('HIT')) cls += ' hit-event';
-  else if (def.color === 'Blue') cls += ' blue-event';
-  else if (def.color === 'Red') cls += ' red-event';
+  let icon = '';
+
+  if (evtType === 'Destroyed') { cls += ' destroyed-event'; icon = '\u2716 '; }
+  else if (evtType === 'TakenOff') { cls += ' takeoff-event'; icon = '\u2191 '; }
+  else if (evtType === 'Landed') { cls += ' landed-event'; icon = '\u2193 '; }
+  else if (evtType === 'Bookmark') { cls += ' bookmark-event'; icon = '\u2605 '; }
+  else if (evtType === 'Timeout') { cls += ' timeout-event'; icon = '\u231B '; }
+  else if (evtType === 'Message' && (msg.includes('FOX') || msg.includes('LAUNCH'))) { cls += ' hit-event'; icon = '\uD83D\uDE80 '; }
+  else if (evtType === 'Message' && (msg.includes('DODGE') || msg.includes('EVADE'))) { cls += ' takeoff-event'; icon = '\u21BA '; }
+  else if (evtType === 'Message' && msg.includes('NEZ')) { cls += ' bookmark-event'; icon = '\u26A0 '; }
+  else if (msg.includes('SPLASH') || msg.includes('HIT')) cls += ' hit-event';
+  else if (def.Color === 'Blue') cls += ' blue-event';
+  else if (def.Color === 'Red') cls += ' red-event';
+
   el.className = cls;
-  el.textContent = `[${def.name || objId}] ${msg}`;
+  const name = def.Name || objId;
+  el.textContent = name ? `${icon}[${name}] ${msg}` : `${icon}${msg}`;
   container.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
@@ -861,6 +1261,20 @@ function showEvent(evtStr) {
 // ═══════════════════════════════════════════
 // Object list (only rebuild when dirty)
 // ═══════════════════════════════════════════
+function getTypeCategory(type) {
+  if (!type) return 'Other';
+  if (type.includes('Circle') || type.includes('Misc')) return 'Circle';
+  if (type.includes('Missile')) return 'Missile';
+  if (type.includes('FixedWing')) return 'Fixed Wing';
+  if (type.includes('Rotorcraft')) return 'Rotorcraft';
+  if (type.includes('Ground')) return 'Ground';
+  if (type.includes('Sea')) return 'Sea';
+  if (type.includes('Air')) return 'Air';
+  if (type.includes('Weapon')) return 'Weapon';
+  if (type.includes('Navaid') || type.includes('Bullseye')) return 'Navaid';
+  return 'Other';
+}
+
 function rebuildObjectList() {
   if (!objectListDirty || !acmiData) return;
   objectListDirty = false;
@@ -868,41 +1282,64 @@ function rebuildObjectList() {
   const list = document.getElementById('object-list');
   list.textContent = '';
 
+  // Group objects by type category (skip circles — they're visual aids)
+  const groups = {};
   for (const [id, def] of Object.entries(acmiData.objectDefs)) {
-    if ((def.type || '').includes('Missile')) continue;
-    const alive = objectStates[id]?.alive !== false;
-    const el = document.createElement('div');
-    el.className = 'obj-entry' + (alive ? '' : ' destroyed') + (trackingId === id ? ' tracking' : '');
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.style.background = getCSSColor(def.color);
-    el.appendChild(dot);
-    el.appendChild(document.createTextNode(def.name || id));
-    el.addEventListener('click', () => {
-      trackingId = trackingId === id ? null : id;
-      document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.name}` : 'Free';
-      objectListDirty = true;
-    });
-    list.appendChild(el);
+    const cat = getTypeCategory(def.Type || '');
+    if (cat === 'Circle') continue;
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push([id, def]);
   }
 
-  // Missiles
-  const missiles = Object.entries(acmiData.objectDefs).filter(([,d]) => (d.type||'').includes('Missile'));
-  if (missiles.length > 0) {
+  // Display order
+  const order = ['Fixed Wing', 'Rotorcraft', 'Air', 'Ground', 'Sea', 'Navaid', 'Other', 'Weapon', 'Missile'];
+
+  for (const cat of order) {
+    const items = groups[cat];
+    if (!items || items.length === 0) continue;
+
     const hdr = document.createElement('div');
-    hdr.className = 'section-title';
-    hdr.style.marginTop = '8px';
-    hdr.textContent = 'Missiles';
+    hdr.className = 'obj-type-header';
+    hdr.textContent = `${cat} (${items.length})`;
     list.appendChild(hdr);
-    for (const [id, def] of missiles) {
+
+    for (const [id, def] of items) {
       const alive = objectStates[id]?.alive !== false;
       const el = document.createElement('div');
-      el.className = 'obj-entry' + (alive ? '' : ' destroyed');
+      el.className = 'obj-entry' + (alive ? '' : ' destroyed') + (trackingId === id ? ' tracking' : '');
       const dot = document.createElement('span');
       dot.className = 'dot';
-      dot.style.background = getCSSColor(def.color);
+      dot.style.background = getCSSColor(def.Color);
       el.appendChild(dot);
-      el.appendChild(document.createTextNode(def.name || id));
+
+      // Name with CallSign
+      const nameText = document.createElement('span');
+      if (def.CallSign) {
+        const cs = document.createElement('span');
+        cs.className = 'obj-callsign';
+        cs.textContent = def.CallSign + ' ';
+        nameText.appendChild(cs);
+      }
+      nameText.appendChild(document.createTextNode(def.Name || id));
+      el.appendChild(nameText);
+
+      // Country code
+      if (def.Country) {
+        const extra = document.createElement('span');
+        extra.className = 'obj-extra';
+        extra.textContent = def.Country;
+        el.appendChild(extra);
+      }
+
+      // Click to track (skip missiles)
+      if (cat !== 'Missile') {
+        el.addEventListener('click', () => {
+          trackingId = trackingId === id ? null : id;
+          document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.CallSign || def.Name}` : 'Free';
+          objectListDirty = true;
+        });
+        el.style.cursor = 'pointer';
+      }
       list.appendChild(el);
     }
   }
@@ -936,23 +1373,52 @@ function updateCamera() {
 // ═══════════════════════════════════════════
 function loadACMIIntoScene(data) {
   acmiData = data;
-  currentTime = 0; playing = false; lastFrameIdx = 0; trackingId = null;
+  currentTime = 0; playing = false; lastFrameIdx = 0; lastEventFrameIdx = -1; trackingId = null;
 
   // Clear previous
   for (const id in objects3D) {
     scene.remove(objects3D[id].mesh);
-    scene.remove(objects3D[id].trail);
+    if (objects3D[id].trail) scene.remove(objects3D[id].trail);
     delete objects3D[id];
   }
   for (const id in labelEls) { labelEls[id].root.remove(); delete labelEls[id]; }
   for (const id in objectStates) delete objectStates[id];
+  for (const id in objectProps) delete objectProps[id];
   for (const e of explosions) scene.remove(e);
   explosions.length = 0;
+  // Clear viz overlays
+  for (const id in vizObjects) {
+    const viz = vizObjects[id];
+    if (viz.radarCone) scene.remove(viz.radarCone);
+    if (viz.wezSphere) scene.remove(viz.wezSphere);
+    if (viz.lockLine) { scene.remove(viz.lockLine); viz.lockLine.geometry.dispose(); }
+    delete vizObjects[id];
+  }
 
   document.getElementById('scenario-title').textContent = data.title || 'ACMI Replay';
   document.getElementById('info-duration').textContent = data.maxTime.toFixed(1) + 's';
   document.getElementById('timeline-slider').max = Math.floor(data.maxTime * 10);
   document.querySelectorAll('.hud').forEach(el => el.style.display = '');
+  document.getElementById('detail-panel').style.display = 'none';
+
+  // Populate extra global info
+  const extraEl = document.getElementById('info-extra');
+  extraEl.textContent = '';
+  const extras = [
+    ['Author', data.author], ['Source', data.dataSource],
+    ['Recorder', data.dataRecorder], ['Category', data.category],
+    ['Map', data.mapId],
+  ];
+  for (const [label, val] of extras) {
+    if (!val) continue;
+    const row = document.createElement('div');
+    row.className = 'info-row';
+    row.appendChild(document.createTextNode(label + ': '));
+    const span = document.createElement('span');
+    span.textContent = val;
+    row.appendChild(span);
+    extraEl.appendChild(row);
+  }
 
   // Center camera on action
   const f0 = data.frames[0];
@@ -968,6 +1434,29 @@ function loadACMIIntoScene(data) {
   }
 
   buildTimelines(data);
+
+  // Build circle → parent aircraft mapping by matching positions at t=0
+  for (const id in circleParents) delete circleParents[id];
+  for (const cid in data.objectDefs) {
+    const cdef = data.objectDefs[cid];
+    if (!(cdef.Type || '').includes('Circle')) continue;
+    const ctl = objectTimelines[cid];
+    if (!ctl || !ctl.length) continue;
+    const cp = ctl[0];
+    let bestId = null, bestDist = Infinity;
+    for (const pid in objectTimelines) {
+      if (pid === cid) continue;
+      const pdef = data.objectDefs[pid] || {};
+      if ((pdef.Type || '').includes('Circle') || (pdef.Type || '').includes('Misc')) continue;
+      const ptl = objectTimelines[pid];
+      if (!ptl || !ptl.length) continue;
+      const pp = ptl[0];
+      const d = Math.abs(cp.lon - pp.lon) + Math.abs(cp.lat - pp.lat) + Math.abs(cp.alt - pp.alt);
+      if (d < bestDist) { bestDist = d; bestId = pid; }
+    }
+    if (bestId && bestDist < 0.01) circleParents[cid] = bestId;
+  }
+
   objectListDirty = true;
   applyFramesUpTo(0);
   updateVisuals();
@@ -1056,16 +1545,23 @@ function setupUI() {
 
   document.getElementById('btn-reset').addEventListener('click', () => {
     if (!acmiData) return;
-    currentTime = 0; lastFrameIdx = 0; playing = false;
+    currentTime = 0; lastFrameIdx = 0; lastEventFrameIdx = -1; playing = false;
     playBtn.innerHTML = '&#9654; Play';
     for (const id in objects3D) {
       const o = objects3D[id];
-      o.trailCount = 0; o.trailGeo.setDrawRange(0,0);
-      o.mesh.visible = false; o.trail.visible = false;
+      if (o.trail) { o.trailCount = 0; o.trailGeo.setDrawRange(0,0); o.trail.visible = false; }
+      o.mesh.visible = false;
     }
     for (const id in objectStates) delete objectStates[id];
+    for (const id in objectProps) delete objectProps[id];
     for (const e of explosions) { scene.remove(e); e.geometry.dispose(); e.material.dispose(); }
     explosions.length = 0;
+    for (const id in vizObjects) {
+      const viz = vizObjects[id];
+      if (viz.radarCone) viz.radarCone.visible = false;
+      if (viz.wezSphere) viz.wezSphere.visible = false;
+      if (viz.lockLine) viz.lockLine.visible = false;
+    }
     objectListDirty = true;
     applyFramesUpTo(0);
     slider.value = 0;
@@ -1087,6 +1583,13 @@ function setupUI() {
     else if (e.key === 'r' || e.key === 'R') document.getElementById('btn-reset').click();
   });
 
+  // Viz overlay checkboxes
+  document.getElementById('viz-lar').addEventListener('change', e => { vizEnabled.lar = e.target.checked; });
+  document.getElementById('viz-nez').addEventListener('change', e => { vizEnabled.nez = e.target.checked; });
+  document.getElementById('viz-radar').addEventListener('change', e => { vizEnabled.radar = e.target.checked; });
+  document.getElementById('viz-wez').addEventListener('change', e => { vizEnabled.wez = e.target.checked; });
+  document.getElementById('viz-lock').addEventListener('change', e => { vizEnabled.lock = e.target.checked; });
+
   // Double-click to track
   renderer.domElement.addEventListener('dblclick', (e) => {
     if (!acmiData) return;
@@ -1107,7 +1610,7 @@ function setupUI() {
     if (closest) {
       trackingId = trackingId === closest ? null : closest;
       const def = acmiData.objectDefs[closest] || {};
-      document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.name}` : 'Free';
+      document.getElementById('camera-mode-text').textContent = trackingId ? `Tracking ${def.Name}` : 'Free';
       objectListDirty = true;
     }
   });
