@@ -79,7 +79,7 @@ canvas { display: block; }
 .event-msg {
   font-size: 13px; padding: 4px 10px; margin: 3px 0; border-radius: 4px;
   background: rgba(0,0,0,0.7); border-left: 3px solid #4af;
-  animation: fadeInUp 0.3s ease-out, fadeOut 0.5s ease-in 4.5s forwards;
+  animation: fadeInUp 0.3s ease-out, fadeOut 0.5s ease-in 2.5s forwards;
   white-space: nowrap;
 }
 .event-msg.red-event { border-left-color: #f44; }
@@ -485,6 +485,7 @@ const labelEls = {};      // id → { root, nameSpan, infoSpan, tacSpan }
 const objectStates = {};  // id → { lon,lat,alt,roll,pitch,yaw,alive,label }
 let currentTime = 0, playing = false, playSpeed = 1, trackingId = null;
 let lastFrameIdx = 0;
+let lastEventFrameIdx = -1;  // track last frame whose events were shown (prevent duplicates)
 const explosions = [];
 const TRAIL_MAX = 300;
 let objectListDirty = true;
@@ -686,6 +687,7 @@ function applyFramesUpTo(targetTime) {
     for (const id in objectStates) delete objectStates[id];
     for (const id in objectTlIdx) objectTlIdx[id] = 0;
     lastFrameIdx = 0;
+    lastEventFrameIdx = -1;
     objectListDirty = true;
   }
 
@@ -710,11 +712,12 @@ function applyFramesUpTo(targetTime) {
         objectListDirty = true;
         const o = objects3D[rid];
         if (o && o.alive) {
-          // Use last timeline position for explosion
+          // Use interpolated position at removal time for explosion
           const tl = objectTimelines[rid];
           if (tl && tl.length) {
-            const last = tl[tl.length - 1];
-            geoToWorld(_pos, last.lon, last.lat, last.alt, acmiData.refLon, acmiData.refLat);
+            const s = sampleTimeline(tl, frame.time, objectTlIdx[rid] || 0);
+            objectTlIdx[rid] = s.idx;
+            geoToWorld(_pos, s.lon, s.lat, s.alt, acmiData.refLon, acmiData.refLat);
           }
           const exp = createExplosion(_pos.x, _pos.y, _pos.z);
           scene.add(exp);
@@ -723,9 +726,10 @@ function applyFramesUpTo(targetTime) {
       }
     }
 
-    // Events — only show if near playhead (avoid replaying on seek)
-    if (frame.time > currentTime - 0.2) {
+    // Events — only show once per frame, and only if near playhead (avoid replaying on seek)
+    if (fi > lastEventFrameIdx && frame.time > targetTime - 0.5) {
       for (let ei = 0; ei < frame.events.length; ei++) showEvent(frame.events[ei]);
+      lastEventFrameIdx = fi;
     }
 
     // Labels
@@ -825,6 +829,8 @@ function updateVisuals() {
 // ═══════════════════════════════════════════
 // Event display
 // ═══════════════════════════════════════════
+const MAX_EVENT_MSGS = 6;
+
 function showEvent(evtStr) {
   const p1 = evtStr.indexOf('|');
   if (p1 === -1) return;
@@ -834,6 +840,13 @@ function showEvent(evtStr) {
   const msg = evtStr.substring(p2 + 1);
   const def = acmiData?.objectDefs[objId] || {};
 
+  const container = document.getElementById('event-log');
+
+  // Remove oldest messages if exceeding limit
+  while (container.childElementCount >= MAX_EVENT_MSGS) {
+    container.removeChild(container.firstElementChild);
+  }
+
   const el = document.createElement('div');
   let cls = 'event-msg';
   if (msg.includes('SPLASH') || msg.includes('HIT')) cls += ' hit-event';
@@ -841,8 +854,8 @@ function showEvent(evtStr) {
   else if (def.color === 'Red') cls += ' red-event';
   el.className = cls;
   el.textContent = `[${def.name || objId}] ${msg}`;
-  document.getElementById('event-log').appendChild(el);
-  setTimeout(() => el.remove(), 5500);
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
 }
 
 // ═══════════════════════════════════════════
